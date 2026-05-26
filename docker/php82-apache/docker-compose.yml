@@ -1,0 +1,36 @@
+services:
+  php:
+    platform: linux/amd64
+    build:
+      context: ${LIBER_WORKSPACE}
+      dockerfile: infra/docker/php82-apache/Dockerfile
+    container_name: liber_php82
+
+    ports:
+      - "8080:80"
+
+    volumes:
+      - ${LIBER_WORKSPACE}/projetos/liberSitemas/Liber:/var/www/html
+      - ${LIBER_WORKSPACE}/infra/proxies/liberSistemas:/proxy
+
+    entrypoint: ["/bin/bash", "/proxy/entrypoint_odbc.sh"]
+
+    env_file:
+      - ${LIBER_WORKSPACE}/infra/conexoes/liberSistemas/DAT/.env
+      - ${LIBER_WORKSPACE}/infra/conexoes/liberSistemas/DAT/.env.odbc
+
+    depends_on:
+      - proxy-db
+
+  proxy-db:
+    build:
+      context: .
+      dockerfile: proxy.Dockerfile
+
+    env_file:
+      - ${LIBER_WORKSPACE}/infra/conexoes/liberSistemas/DAT/.env
+
+    volumes:
+      - ${LIBER_WORKSPACE}/infra/proxies/liberSistemas:/proxy
+
+    command: sh /proxy/proxy_generic.sh

@@ -1,0 +1,7 @@
+.DS_Store
+
+# Credenciais locais (versionar apenas os *.example)
+**/.env
+!**/.env.example
+**/.env.odbc
+!**/.env.odbc.example
