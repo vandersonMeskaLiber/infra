@@ -27,7 +27,15 @@ Configuração de ambiente local LIBER: Docker, proxies e templates de conexão.
 
    Repita em `MQP/` ou outros diretórios de cliente.
 
-3. Suba os containers a partir de `docker/php82-apache/` (ver README da pasta).
+3. **MySQL remoto** — no `.env` do cliente, troque os placeholders:
+
+   - `REMOTE_HOST` — host/IP do MySQL (não use `seu-host-remoto`)
+   - `REMOTE_PORT` — porta real no servidor (ex.: `53306` para DAT)
+   - `DB_OPER_PASSWORD` — senha do MySQL, se houver
+
+   MySQL na própria máquina (fora do Docker): `REMOTE_HOST=host.docker.internal`
+
+4. Suba os containers a partir de `docker/php82-apache/` (ver README da pasta).
 
 ## Git e arquivos ocultos
 
