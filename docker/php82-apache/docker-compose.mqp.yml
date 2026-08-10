@@ -1,0 +1,9 @@
+services:
+  php:
+    env_file:
+      - ${LIBER_WORKSPACE}/infra/conexoes/liberSistemas/MQP/.env
+      - ${LIBER_WORKSPACE}/infra/conexoes/liberSistemas/MQP/.env.odbc
+
+  proxy-db:
+    env_file:
+      - ${LIBER_WORKSPACE}/infra/conexoes/liberSistemas/MQP/.env

@@ -39,5 +39,25 @@ RUN docker-php-ext-configure odbc --with-unixODBC=shared,/usr \
 
 RUN a2enmod rewrite ssl
 
+# Logging de erros PHP no stderr (aparece em `docker logs`)
+RUN { \
+    echo 'log_errors=On'; \
+    echo 'error_log=/proc/self/fd/2'; \
+    echo 'display_errors=On'; \
+    echo 'display_startup_errors=On'; \
+    echo 'html_errors=On'; \
+    echo 'error_reporting=E_ALL'; \
+  } > /usr/local/etc/php/conf.d/99-liber-errors.ini
+
+# Limites de upload (chat GESTAO / anexos MP4 etc. — alinhado ao upload.php 200MB)
+RUN { \
+    echo 'upload_max_filesize=200M'; \
+    echo 'post_max_size=220M'; \
+    echo 'max_file_uploads=50'; \
+    echo 'memory_limit=256M'; \
+    echo 'max_execution_time=300'; \
+    echo 'max_input_time=300'; \
+  } > /usr/local/etc/php/conf.d/98-liber-uploads.ini
+
 WORKDIR /var/www/html
 EXPOSE 80

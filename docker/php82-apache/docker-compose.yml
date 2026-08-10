@@ -11,6 +11,7 @@ services:
 
     volumes:
       - ${LIBER_WORKSPACE}/projetos/liberSitemas/Liber:/var/www/html
+      - ${LIBER_WORKSPACE}/projetos/liberSitemas/LiberAPI:/var/www/LiberAPI
       - ${LIBER_WORKSPACE}/infra/proxies/liberSistemas:/proxy
 
     entrypoint: ["/bin/bash", "/proxy/entrypoint_odbc.sh"]
