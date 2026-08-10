@@ -303,19 +303,32 @@ def render_html(data: Dict[str, Any]) -> str:
     padding: 16px 18px; margin-bottom: 14px;
   }}
   .panel h2 {{ margin: 0 0 12px; font-size: 1rem; font-weight: 600; }}
+  .timeline-wrap {{
+    display: grid; grid-template-columns: 72px 1fr; gap: 8px; align-items: start;
+    margin-bottom: 10px;
+  }}
+  .timeline-lanes {{
+    display: grid; grid-template-rows: 1fr 1fr; height: 68px; gap: 0;
+    color: var(--muted); font-size: .7rem; font-family: var(--mono);
+  }}
+  .timeline-lanes span {{
+    display: flex; align-items: center; justify-content: flex-end; padding-right: 2px;
+  }}
   .timeline {{
-    position: relative; height: 54px; border-radius: 10px;
-    background: repeating-linear-gradient(
-      90deg, var(--bg2) 0, var(--bg2) calc(100%/24 - 1px), var(--line) calc(100%/24 - 1px), var(--line) calc(100%/24)
-    );
-    overflow: hidden; margin-bottom: 10px;
+    position: relative; height: 68px; border-radius: 10px;
+    background:
+      linear-gradient(180deg, transparent 33px, var(--line) 33px, var(--line) 34px, transparent 34px),
+      repeating-linear-gradient(
+        90deg, var(--bg2) 0, var(--bg2) calc(100%/14 - 1px), var(--line) calc(100%/14 - 1px), var(--line) calc(100%/14)
+      );
+    overflow: hidden;
   }}
   .seg {{
-    position: absolute; top: 10px; height: 34px; border-radius: 8px; opacity: .92;
+    position: absolute; height: 22px; border-radius: 6px; opacity: .92;
     min-width: 3px;
   }}
-  .seg.wifi {{ background: linear-gradient(90deg, #2563eb, #60a5fa); }}
-  .seg.topic {{ background: linear-gradient(90deg, #d97706, #fbbf24); top: 14px; height: 26px; opacity: .85; }}
+  .seg.wifi {{ background: linear-gradient(90deg, #2563eb, #60a5fa); top: 6px; }}
+  .seg.topic {{ background: linear-gradient(90deg, #d97706, #fbbf24); top: 40px; opacity: .9; }}
   .hours {{
     display: flex; justify-content: space-between; color: var(--muted);
     font-size: .7rem; font-family: var(--mono); margin-bottom: 14px;
@@ -363,14 +376,19 @@ def render_html(data: Dict[str, Any]) -> str:
     <section class="kpis" id="kpis"></section>
 
     <section class="panel">
-      <h2>Linha do tempo (00:00–24:00)</h2>
+      <h2>Linha do tempo (05:00–19:00)</h2>
       <div class="legend">
         <span><i class="w"></i>Wi‑Fi</span>
         <span><i class="t"></i>Assuntos</span>
       </div>
-      <div class="timeline" id="timeline"></div>
-      <div class="hours">
-        <span>00</span><span>06</span><span>12</span><span>18</span><span>24</span>
+      <div class="timeline-wrap">
+        <div class="timeline-lanes"><span>Wi‑Fi</span><span>Assuntos</span></div>
+        <div>
+          <div class="timeline" id="timeline"></div>
+          <div class="hours">
+            <span>05</span><span>08</span><span>12</span><span>15</span><span>19</span>
+          </div>
+        </div>
       </div>
     </section>
 
@@ -397,13 +415,17 @@ function esc(s) {{
   return String(s ?? '').replace(/[&<>"']/g, c => ({{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}}[c]));
 }}
 
+const TL_START_MIN = 5 * 60;   // 05:00
+const TL_END_MIN = 19 * 60;    // 19:00
+const TL_SPAN_MIN = TL_END_MIN - TL_START_MIN;
+
 function minutesOfDay(iso) {{
   const d = new Date(iso);
   return d.getHours() * 60 + d.getMinutes() + d.getSeconds() / 60;
 }}
 
 function pct(min) {{
-  return Math.max(0, Math.min(100, (min / (24 * 60)) * 100));
+  return Math.max(0, Math.min(100, ((min - TL_START_MIN) / TL_SPAN_MIN) * 100));
 }}
 
 function renderStatus() {{
@@ -448,22 +470,24 @@ function renderDay(day) {{
   const tl = document.getElementById('timeline');
   tl.innerHTML = '';
   (d.wifi || []).forEach(iv => {{
-    const a = minutesOfDay(iv.start);
-    const b = minutesOfDay(iv.end);
+    const left = pct(minutesOfDay(iv.start));
+    const right = pct(minutesOfDay(iv.end));
+    if (right <= left) return;
     const el = document.createElement('div');
     el.className = 'seg wifi';
-    el.style.left = pct(a) + '%';
-    el.style.width = Math.max(0.35, pct(b) - pct(a)) + '%';
+    el.style.left = left + '%';
+    el.style.width = Math.max(0.35, right - left) + '%';
     el.title = `${{iv.start_hm}}–${{iv.end_hm}} (${{iv.dur}})`;
     tl.appendChild(el);
   }});
   (d.topics || []).forEach(iv => {{
-    const a = minutesOfDay(iv.start);
-    const b = minutesOfDay(iv.end);
+    const left = pct(minutesOfDay(iv.start));
+    const right = pct(minutesOfDay(iv.end));
+    if (right <= left) return;
     const el = document.createElement('div');
     el.className = 'seg topic';
-    el.style.left = pct(a) + '%';
-    el.style.width = Math.max(0.35, pct(b) - pct(a)) + '%';
+    el.style.left = left + '%';
+    el.style.width = Math.max(0.35, right - left) + '%';
     el.title = `${{iv.start_hm}}–${{iv.end_hm}} · ${{iv.label}}`;
     tl.appendChild(el);
   }});

@@ -586,10 +586,48 @@ def rebuild_day_from_prompts(
 
     usable.sort(key=lambda x: x[1])
     cursor = usable[0][1]
-    for key, _first, sec in usable:
+    fb = fallback_end
+    # alinha tz para comparar com os timestamps dos prompts
+    if cursor.tzinfo is not None and fb.tzinfo is None:
+        fb = fb.replace(tzinfo=cursor.tzinfo)
+    elif fb.tzinfo is not None and cursor.tzinfo is None:
+        cursor = cursor.replace(tzinfo=fb.tzinfo)
+
+    wall_sec = max(0, int((fb - cursor).total_seconds()))
+    if wall_sec < 60:
+        save_subjects_for_day(day, [])
+        return []
+
+    total_sec = sum(sec for _, _, sec in usable)
+    # Temas em abas paralelas geram janelas (last-first) que se sobrepõem no relógio.
+    # Somar e empilhar em sequência empurrava o fim para o futuro (ex.: 14:25 às 13:00).
+    # Comprime proporcionalmente para caber em [1º prompt, fallback_end] (= agora no dia corrente).
+    alloc: List[Tuple[str, int]] = []
+    if total_sec > wall_sec:
+        remaining = wall_sec
+        for i, (key, _first, sec) in enumerate(usable):
+            if i == len(usable) - 1:
+                part = remaining
+            else:
+                part = min(remaining, int(sec * wall_sec / total_sec))
+            alloc.append((key, part))
+            remaining -= part
+        if alloc and remaining:
+            k, p = alloc[-1]
+            alloc[-1] = (k, max(0, p + remaining))
+    else:
+        alloc = [(key, sec) for key, _first, sec in usable]
+
+    for key, sec in alloc:
+        if sec < 60:
+            continue
         b = buckets[key]
         start = cursor
-        end = start + timedelta(seconds=sec)
+        if start >= fb:
+            break
+        end = min(start + timedelta(seconds=sec), fb)
+        if int((end - start).total_seconds()) < 60:
+            break
         packed.append(
             Subject(
                 id=f"pack-{abs(hash(key)) % 100000:05d}",
