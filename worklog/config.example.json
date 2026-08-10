@@ -1,0 +1,39 @@
+{
+  "office_ssids": [
+    "Liber Sistemas"
+  ],
+  "office_gateways": [
+    "192.168.244.1"
+  ],
+  "match_mode": "any",
+  "wifi_interface": "en0",
+  "poll_seconds": 60,
+  "gap_ignore_seconds": 90,
+  "topic_gap_minutes": 45,
+  "timezone": "America/Sao_Paulo",
+  "summary_hour": 18,
+  "summary_minute": 30,
+  "worklog_dir": "/Users/vandersonmeska/Documents/workspace/infra/worklog",
+  "apontamento": {
+    "enabled": true,
+    "dry_run": true,
+    "usuario_gestao_id": 14,
+    "min_minutes": 5,
+    "permitir_outras_semanas": false,
+    "mappings": [],
+    "db": {
+      "host": "162.214.159.119",
+      "port": 3306,
+      "user": "wwlibe_admin",
+      "password": "",
+      "database": "wwlibe_gestaosistema"
+    },
+    "usuario_label": "14 - Vanderson Meska",
+    "default_codigo_chamado": "CHA-2761",
+    "round_minutes": 5
+  },
+  "almoco": {
+    "inicio": "12:10",
+    "fim": "13:00"
+  }
+}

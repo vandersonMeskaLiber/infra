@@ -5,3 +5,9 @@
 !**/.env.example
 **/.env.odbc
 !**/.env.odbc.example
+
+# Worklog — runtime/segredos (detalhe em worklog/.gitignore)
+worklog/config.json
+worklog/logs/
+worklog/diario/
+worklog/dashboard.html

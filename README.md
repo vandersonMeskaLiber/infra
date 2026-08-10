@@ -9,6 +9,7 @@ Configuração de ambiente local LIBER: Docker, proxies e templates de conexão.
 | `docker/php82-apache/` | Imagem PHP 8.2 + Apache e `docker-compose` |
 | `proxies/liberSistemas/` | Scripts de proxy (MySQL, ODBC) |
 | `conexoes/liberSistemas/` | Templates `.env.example` por cliente (`DAT`, `MQP`, …) |
+| `worklog/` | Código do Worklog (presença Wi‑Fi + Cursor + apontamentos). Runtime em `~/.worklog` via `bash worklog/bin/install.sh` |
 
 ## Primeiro uso
 
@@ -42,3 +43,5 @@ Configuração de ambiente local LIBER: Docker, proxies e templates de conexão.
 Pastas como `conexoes` usam arquivos `.env*`. O Git versiona normalmente; a interface web do GitHub **não** envia bem esses arquivos — use `git push` na linha de comando.
 
 Arquivos `.env` e `.env.odbc` (sem `.example`) ficam fora do repositório por segurança.
+
+No `worklog/`, versionar `config.example.json`; manter `config.json` e `logs/` locais (ver `worklog/.gitignore`).
