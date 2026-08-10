@@ -150,7 +150,7 @@ def day_payload(day: date, cfg: Dict[str, Any], wifi_rows, cursor_rows, now: dat
     else:
         fallback_end = day_end - timedelta(seconds=1)
 
-    topics = ds.build_topics(cursor_rows, day_start, day_end, topic_gap, fallback_end)
+    topics = ds.build_topics(cursor_rows, day_start, day_end, topic_gap, fallback_end, cfg)
     label = ds.dominant_wifi_label(wifi, cfg)
 
     wifi_total = sum(iv.seconds for iv in wifi)

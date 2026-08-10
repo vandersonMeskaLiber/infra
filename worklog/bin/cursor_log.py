@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Hook do Cursor: grava prompts/sessões em cursor.jsonl. Sempre fail-open."""
+"""Hook do Cursor: grava prompts/sessões e atualiza assunto sticky local. Fail-open."""
 
 from __future__ import annotations
 
@@ -9,8 +9,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-WORKLOG_DIR = Path(__file__).resolve().parent.parent
+SCRIPT_DIR = Path(__file__).resolve().parent
+WORKLOG_DIR = SCRIPT_DIR.parent
 LOG_PATH = WORKLOG_DIR / "logs" / "cursor.jsonl"
+
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
 
 
 def now_iso() -> str:
@@ -43,7 +47,6 @@ def main() -> int:
     except Exception:
         payload = {"_raw": raw[:500]}
 
-    # Cursor pode enviar o nome do evento de formas diferentes
     event = (
         pick(payload, "hook_event_name", "event", "event_name", "type")
         or "unknown"
@@ -70,7 +73,6 @@ def main() -> int:
         "workspace": clean_text(workspace, 200) if workspace else None,
     }
 
-    # só persiste eventos úteis
     useful = False
     if row["prompt"]:
         useful = True
@@ -91,7 +93,19 @@ def main() -> int:
         except Exception:
             pass
 
-    # fail-open: não bloqueia o Cursor
+        # atualiza assunto sticky (local) — nunca bloqueia o Cursor
+        try:
+            import assuntos_engine as ae
+
+            ae.apply_event(
+                prompt=row["prompt"],
+                conversation_id=row["conversation_id"],
+                workspace=str(row.get("workspace") or ""),
+                event=event,
+            )
+        except Exception:
+            pass
+
     print("{}")
     return 0
 
