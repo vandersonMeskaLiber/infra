@@ -7,6 +7,7 @@ import argparse
 import json
 import subprocess
 import sys
+import uuid
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -16,6 +17,7 @@ WORKLOG_DIR = SCRIPT_DIR.parent
 OUT_HTML = WORKLOG_DIR / "dashboard.html"
 STATE_PATH = WORKLOG_DIR / "logs" / "state" / "wifi_state.json"
 WIFI_PRESENCA_PATH = WORKLOG_DIR / "logs" / "wifi_presenca.json"
+ASSUNTOS_MANUAIS_PATH = WORKLOG_DIR / "logs" / "assuntos_manuais.json"
 
 # reusa a lógica do daily_summary (mesmo diretório)
 if str(SCRIPT_DIR) not in sys.path:
@@ -83,6 +85,181 @@ def clear_wifi_presenca_dia(day: date) -> Dict[str, Any]:
     return {"day": day.isoformat(), "manual": False, "cleared": True}
 
 
+def load_assuntos_manuais() -> Dict[str, Any]:
+    if not ASSUNTOS_MANUAIS_PATH.exists():
+        return {}
+    try:
+        data = json.loads(ASSUNTOS_MANUAIS_PATH.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _save_assuntos_manuais(data: Dict[str, Any]) -> None:
+    ASSUNTOS_MANUAIS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    ASSUNTOS_MANUAIS_PATH.write_text(
+        json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+
+
+def assuntos_manuais_do_dia(day: date) -> List[Dict[str, Any]]:
+    raw = load_assuntos_manuais().get(day.isoformat()) or []
+    if not isinstance(raw, list):
+        return []
+    out: List[Dict[str, Any]] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        if not (item.get("inicio") and item.get("fim") and item.get("assunto")):
+            continue
+        out.append(item)
+    return out
+
+
+def add_assunto_manual(
+    day: date,
+    inicio: str,
+    fim: str,
+    assunto: str,
+    codigo_chamado: Optional[str] = None,
+) -> Dict[str, Any]:
+    pi = _parse_hm(inicio)
+    pf = _parse_hm(fim)
+    if not pi or not pf:
+        raise ValueError("Horário inválido (use HH:MM)")
+    ini_s = _fmt_hm(*pi)
+    fim_s = _fmt_hm(*pf)
+    if (pi[0], pi[1]) >= (pf[0], pf[1]):
+        raise ValueError("Fim deve ser maior que o início")
+    label = (assunto or "").strip()
+    if not label:
+        raise ValueError("Informe o assunto (ex.: reunião)")
+    if len(label) > 200:
+        label = label[:200].rstrip()
+    codigo = (codigo_chamado or "").strip().upper() or None
+    if codigo:
+        import re
+
+        m = re.match(r"^(?:CHA[\s\-_]*)?(\d{1,6})$", codigo)
+        if not m:
+            raise ValueError("Chamado inválido (use CHA-XXXX)")
+        n = int(m.group(1))
+        codigo = f"CHA-{n:04d}" if n < 1000 else f"CHA-{n}"
+
+    item = {
+        "id": f"manual-{uuid.uuid4().hex[:10]}",
+        "inicio": ini_s,
+        "fim": fim_s,
+        "assunto": label,
+        "codigo_chamado": codigo,
+        "manual": True,
+    }
+    data = load_assuntos_manuais()
+    day_s = day.isoformat()
+    lista = data.get(day_s) or []
+    if not isinstance(lista, list):
+        lista = []
+    lista.append(item)
+    lista.sort(key=lambda x: (str(x.get("inicio") or ""), str(x.get("fim") or "")))
+    data[day_s] = lista
+    _save_assuntos_manuais(data)
+    return {"day": day_s, **item}
+
+
+def delete_assunto_manual(day: date, item_id: str) -> Dict[str, Any]:
+    item_id = (item_id or "").strip()
+    if not item_id:
+        raise ValueError("id do assunto manual obrigatório")
+    data = load_assuntos_manuais()
+    day_s = day.isoformat()
+    lista = data.get(day_s) or []
+    if not isinstance(lista, list):
+        lista = []
+    nova = [x for x in lista if str(x.get("id")) != item_id]
+    if len(nova) == len(lista):
+        raise ValueError("Assunto manual não encontrado")
+    if nova:
+        data[day_s] = nova
+    else:
+        data.pop(day_s, None)
+    _save_assuntos_manuais(data)
+    return {"day": day_s, "deleted": item_id, "ok": True}
+
+
+def _topic_dict_from_manual(day: date, item: Dict[str, Any], now: datetime) -> Optional[Dict[str, Any]]:
+    pi = _parse_hm(str(item.get("inicio") or ""))
+    pf = _parse_hm(str(item.get("fim") or ""))
+    label = str(item.get("assunto") or "").strip()
+    if not pi or not pf or not label:
+        return None
+    local = now.tzinfo or datetime.now().astimezone().tzinfo
+    start = datetime(day.year, day.month, day.day, pi[0], pi[1], 0, tzinfo=local)
+    end = datetime(day.year, day.month, day.day, pf[0], pf[1], 0, tzinfo=local)
+    if end <= start:
+        return None
+    seconds = max(0, int((end - start).total_seconds()))
+    return {
+        "id": item.get("id") or f"manual-{uuid.uuid4().hex[:8]}",
+        "start": start.isoformat(),
+        "end": end.isoformat(),
+        "start_hm": ds.fmt_hm(start),
+        "end_hm": ds.fmt_hm(end),
+        "dur": ds.fmt_dur(seconds),
+        "seconds": seconds,
+        "label": label,
+        "manual": True,
+        "codigo_chamado": item.get("codigo_chamado"),
+    }
+
+
+def _carve_auto_topics_around_manuals(
+    auto_topics: List[Dict[str, Any]],
+    manual_topics: List[Dict[str, Any]],
+    min_minutes: int = 5,
+) -> List[Dict[str, Any]]:
+    """Manual prevalece: remove a faixa manual dos assuntos monitorados (mantém sobras)."""
+    if not auto_topics:
+        return []
+    if not manual_topics:
+        return list(auto_topics)
+
+    blockers = []
+    for m in manual_topics:
+        try:
+            blockers.append((ds.parse_ts(m["start"]), ds.parse_ts(m["end"])))
+        except Exception:
+            continue
+    if not blockers:
+        return list(auto_topics)
+
+    min_sec = max(1, int(min_minutes)) * 60
+    carved: List[Dict[str, Any]] = []
+    for t in auto_topics:
+        try:
+            start = ds.parse_ts(t["start"])
+            end = ds.parse_ts(t["end"])
+        except Exception:
+            continue
+        for a0, a1 in ds._subtract_time_ranges(start, end, blockers):
+            seconds = max(0, int((a1 - a0).total_seconds()))
+            if seconds < min_sec:
+                continue
+            piece = dict(t)
+            piece.update(
+                {
+                    "start": a0.isoformat(),
+                    "end": a1.isoformat(),
+                    "start_hm": ds.fmt_hm(a0),
+                    "end_hm": ds.fmt_hm(a1),
+                    "dur": ds.fmt_dur(seconds),
+                    "seconds": seconds,
+                    "manual": False,
+                }
+            )
+            carved.append(piece)
+    return carved
+
+
 def _manual_wifi_interval(
     day: date, inicio: str, fim: str, now: datetime, cfg: Dict[str, Any]
 ) -> ds.Interval:
@@ -119,6 +296,13 @@ def available_days(wifi_rows: List[Dict], cursor_rows: List[Dict], today: date) 
             days.add(str(day_s))
         except Exception:
             continue
+    for day_s, items in load_assuntos_manuais().items():
+        try:
+            date.fromisoformat(str(day_s))
+        except Exception:
+            continue
+        if isinstance(items, list) and items:
+            days.add(str(day_s))
     return sorted(days, reverse=True)
 
 
@@ -154,7 +338,31 @@ def day_payload(day: date, cfg: Dict[str, Any], wifi_rows, cursor_rows, now: dat
     label = ds.dominant_wifi_label(wifi, cfg)
 
     wifi_total = sum(iv.seconds for iv in wifi)
-    topic_total = sum(iv.seconds for iv in topics)
+    auto_topics: List[Dict[str, Any]] = [
+        {
+            "start": iv.start.isoformat(),
+            "end": iv.end.isoformat(),
+            "start_hm": ds.fmt_hm(iv.start),
+            "end_hm": ds.fmt_hm(iv.end),
+            "dur": ds.fmt_dur(iv.seconds),
+            "seconds": iv.seconds,
+            "label": iv.label,
+            "manual": False,
+        }
+        for iv in topics
+    ]
+    manual_topics: List[Dict[str, Any]] = []
+    for item in assuntos_manuais_do_dia(day):
+        t = _topic_dict_from_manual(day, item, now)
+        if t:
+            manual_topics.append(t)
+
+    min_minutes = int(cfg.get("topic_min_minutes") or (cfg.get("apontamento") or {}).get("min_minutes") or 5)
+    # Manual prevalece: corta o monitorado; sobras viram pedaços ajustados
+    auto_topics = _carve_auto_topics_around_manuals(auto_topics, manual_topics, min_minutes)
+    topics_out = auto_topics + manual_topics
+    topics_out.sort(key=lambda t: (t.get("start") or "", t.get("end") or "", 0 if t.get("manual") else 1))
+    topic_total = sum(int(t.get("seconds") or 0) for t in topics_out)
 
     return {
         "date": day.isoformat(),
@@ -186,18 +394,7 @@ def day_payload(day: date, cfg: Dict[str, Any], wifi_rows, cursor_rows, now: dat
             }
             for iv in wifi
         ],
-        "topics": [
-            {
-                "start": iv.start.isoformat(),
-                "end": iv.end.isoformat(),
-                "start_hm": ds.fmt_hm(iv.start),
-                "end_hm": ds.fmt_hm(iv.end),
-                "dur": ds.fmt_dur(iv.seconds),
-                "seconds": iv.seconds,
-                "label": iv.label,
-            }
-            for iv in topics
-        ],
+        "topics": topics_out,
     }
 
 

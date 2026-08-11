@@ -823,6 +823,8 @@ def build_drafts_for_day(day: date, cfg: Optional[Dict[str, Any]] = None) -> Dic
         already_sent: bool,
         invalido_las: bool,
         skip_reason: Optional[str],
+        manual: bool = False,
+        manual_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         seconds = int((end - start).total_seconds())
         minutes = max(0, seconds // 60)
@@ -846,6 +848,8 @@ def build_drafts_for_day(day: date, cfg: Optional[Dict[str, Any]] = None) -> Dic
             "skip_reason": skip_reason,
             "already_sent": already_sent,
             "invalido_las": invalido_las,
+            "manual": bool(manual),
+            "manual_id": manual_id if manual else None,
         }
         row["key"] = draft_key(row)
         if already_sent:
@@ -876,7 +880,12 @@ def build_drafts_for_day(day: date, cfg: Optional[Dict[str, Any]] = None) -> Dic
         end_raw_n = _as_naive(end_raw)
         start, end, round_skip = aplicar_regras_horas_las(start_raw_n, end_raw_n, min_minutes)
         label = topic.get("label") or "Assunto"
-        codigo = resolve_codigo(label)
+        is_manual = bool(topic.get("manual"))
+        row_id_base = str(topic.get("id") or f"{day_s}-{idx}")
+        manual_id = row_id_base if is_manual else None
+        codigo = normalize_codigo(topic.get("codigo_chamado")) if topic.get("codigo_chamado") else None
+        if codigo is None:
+            codigo = resolve_codigo(label)
 
         if start is None or end is None:
             start_show = arredondar_hora_cinco_minutos(start_raw_n)
@@ -885,7 +894,7 @@ def build_drafts_for_day(day: date, cfg: Optional[Dict[str, Any]] = None) -> Dic
                 end_show = start_show + timedelta(minutes=min_minutes)
             drafts.append(
                 make_row(
-                    row_id=f"{day_s}-{idx}",
+                    row_id=row_id_base,
                     start=start_show,
                     end=end_show,
                     start_raw=start_raw_n,
@@ -895,6 +904,8 @@ def build_drafts_for_day(day: date, cfg: Optional[Dict[str, Any]] = None) -> Dic
                     already_sent=False,
                     invalido_las=True,
                     skip_reason=round_skip,
+                    manual=is_manual,
+                    manual_id=manual_id,
                 )
             )
             continue
@@ -912,7 +923,7 @@ def build_drafts_for_day(day: date, cfg: Optional[Dict[str, Any]] = None) -> Dic
                         continue
                 drafts.append(
                     make_row(
-                        row_id=f"{day_s}-{idx}-sent-{part_i}",
+                        row_id=f"{row_id_base}-sent-{part_i}",
                         start=bi,
                         end=bf,
                         start_raw=start_raw_n,
@@ -922,6 +933,8 @@ def build_drafts_for_day(day: date, cfg: Optional[Dict[str, Any]] = None) -> Dic
                         already_sent=True,
                         invalido_las=False,
                         skip_reason="já apontado",
+                        manual=is_manual,
+                        manual_id=manual_id,
                     )
                 )
                 part_i += 1
@@ -932,7 +945,7 @@ def build_drafts_for_day(day: date, cfg: Optional[Dict[str, Any]] = None) -> Dic
                     continue
                 drafts.append(
                     make_row(
-                        row_id=f"{day_s}-{idx}-resto-{part_i}",
+                        row_id=f"{row_id_base}-resto-{part_i}" if part_i else row_id_base,
                         start=fi,
                         end=ff,
                         start_raw=start_raw_n,
@@ -942,6 +955,8 @@ def build_drafts_for_day(day: date, cfg: Optional[Dict[str, Any]] = None) -> Dic
                         already_sent=False,
                         invalido_las=False,
                         skip_reason=None,
+                        manual=is_manual,
+                        manual_id=manual_id,
                     )
                 )
                 part_i += 1

@@ -40,9 +40,10 @@ Não versionar:
 
 1. **Wi‑Fi** — presença na rede do escritório (em sleep o Mac não faz poll; ao acordar fora da rede, o `out` usa o último `last_office_seen`, não o horário do wake)  
 2. **Presença manual** — chegada/saída editáveis no painel  
-3. **Cursor** — hooks gravam prompts/sessões  
-4. **Apontamentos** — rascunho → confirmar → LAS  
-5. **Resumo diário** — `diario/YYYY-MM-DD.md` no runtime  
+3. **Assuntos manuais** — reunião e outros blocos fora do Cursor (formulário no painel → `logs/assuntos_manuais.json`). Em sobreposição com o monitorado, **o manual prevalece** e o restante do assunto automático é ajustado (antes/depois).  
+4. **Cursor** — hooks gravam prompts/sessões  
+5. **Apontamentos** — rascunho → confirmar → LAS  
+6. **Resumo diário** — `diario/YYYY-MM-DD.md` no runtime  
 
 ## Configuração
 

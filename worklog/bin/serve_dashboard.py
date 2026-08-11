@@ -243,6 +243,19 @@ LIVE_HTML = r"""<!DOCTYPE html>
           <button type="button" id="btnConfirmApto">Confirmar apontamentos</button>
         </div>
       </div>
+      <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:12px">
+        <span class="meta">Manual</span>
+        <input id="manualInicio" type="time" style="background:var(--bg2);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-family:var(--mono)" />
+        <span class="meta">até</span>
+        <input id="manualFim" type="time" style="background:var(--bg2);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-family:var(--mono)" />
+        <input id="manualAssunto" type="text" placeholder="Ex.: reunião com cliente" style="flex:1;min-width:180px;background:var(--bg2);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:8px 10px" />
+        <div style="display:flex;align-items:center;background:var(--bg2);border:1px solid var(--line);border-radius:8px;overflow:hidden">
+          <span style="padding:7px 8px;color:var(--muted);font-family:var(--mono);font-size:.82rem;border-right:1px solid var(--line)">CHA-</span>
+          <input id="manualCha" type="text" inputmode="numeric" placeholder="2761" style="width:72px;background:transparent;color:var(--text);border:0;padding:8px 10px;font-family:var(--mono)" />
+        </div>
+        <button type="button" id="btnAddManual">Adicionar assunto</button>
+        <span class="meta" id="manualMsg"></span>
+      </div>
       <div class="err" id="aptoErr" hidden></div>
       <div class="meta" id="aptoMsg" style="margin-bottom:10px" hidden></div>
       <div id="aptoTableWrap">
@@ -274,7 +287,7 @@ let aptoLoading = false;
 const REFRESH_MS = 30000;
 
 function setAptoButtonsDisabled(disabled) {
-  const ids = ['btnConfirmApto', 'btnDistribuirWifi'];
+  const ids = ['btnConfirmApto', 'btnDistribuirWifi', 'btnAddManual'];
   ids.forEach(id => {
     const el = document.getElementById(id);
     if (el) el.disabled = !!disabled;
@@ -356,6 +369,7 @@ function ensureDays() {
     document.getElementById('btnRefresh').addEventListener('click', () => loadData(true));
     document.getElementById('btnConfirmApto').addEventListener('click', () => confirmarApontamentos());
     document.getElementById('btnDistribuirWifi').addEventListener('click', () => distribuirWifi());
+    document.getElementById('btnAddManual').addEventListener('click', () => adicionarAssuntoManual());
     document.getElementById('btnSalvarAlmoco').addEventListener('click', () => salvarAlmoco());
     document.getElementById('btnSalvarWifi').addEventListener('click', () => salvarWifiPresenca());
     document.getElementById('btnWifiAuto').addEventListener('click', () => limparWifiPresenca());
@@ -545,6 +559,7 @@ function renderApontamentos() {
           <th style="padding:8px 6px;width:70px">Dur</th>
           <th style="padding:8px 6px">Assunto</th>
           <th style="padding:8px 6px;width:150px">Chamado</th>
+          <th style="padding:8px 6px;width:70px"></th>
         </tr>
       </thead>
       <tbody>
@@ -555,7 +570,12 @@ function renderApontamentos() {
             ? ' <span class="meta">(já apontado)</span>'
             : (r.invalido_las
               ? ` <span class="meta">(${esc(r.skip_reason || 'inválido LAS')})</span>`
-              : (String(r.id || '').includes('-resto-') ? ' <span class="meta">(restante)</span>' : ''));
+              : (r.manual
+                ? ' <span class="meta">(manual)</span>'
+                : (String(r.id || '').includes('-resto-') ? ' <span class="meta">(restante)</span>' : '')));
+          const delBtn = (r.manual && r.manual_id)
+            ? `<button type="button" class="apto-del-manual" data-mid="${esc(r.manual_id)}" style="padding:6px 8px;font-size:.78rem">Excluir</button>`
+            : '';
           return `
           <tr style="border-top:1px solid var(--line);opacity:${bloqueado ? '.55' : '1'}">
             <td style="padding:10px 6px"><input type="checkbox" data-i="${i}" class="apto-sel" ${(!bloqueado && (r.selected || digits)) ? 'checked' : ''} ${bloqueado ? 'disabled' : ''}></td>
@@ -570,11 +590,13 @@ function renderApontamentos() {
                   style="width:88px;background:transparent;color:var(--text);border:0;padding:8px 10px;font-family:var(--mono)" ${bloqueado ? 'disabled' : ''}>
               </div>
             </td>
+            <td style="padding:10px 6px">${delBtn}</td>
           </tr>`;
         }).join('')}
       </tbody>
     </table>`;
   wireChaInputs();
+  wireManualDelete();
 }
 
 function normalizeCodigoInput(v) {
@@ -606,6 +628,73 @@ function wireChaInputs() {
     inp.addEventListener('input', sync);
     inp.addEventListener('blur', sync);
   });
+}
+
+function wireManualDelete() {
+  document.querySelectorAll('.apto-del-manual').forEach(btn => {
+    if (btn.dataset.wired) return;
+    btn.dataset.wired = '1';
+    btn.addEventListener('click', () => {
+      const mid = btn.getAttribute('data-mid');
+      if (mid) excluirAssuntoManual(mid);
+    });
+  });
+}
+
+async function adicionarAssuntoManual() {
+  const err = document.getElementById('aptoErr');
+  const info = document.getElementById('manualMsg');
+  const day = selectedDay || (DATA && DATA.today);
+  if (!day) return;
+  const inicio = document.getElementById('manualInicio').value;
+  const fim = document.getElementById('manualFim').value;
+  const assunto = document.getElementById('manualAssunto').value;
+  const chaDigits = document.getElementById('manualCha').value;
+  const codigo = normalizeCodigoInput(chaDigits);
+  try {
+    const res = await fetch('/api/assuntos-manuais', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ day, inicio, fim, assunto, codigo_chamado: codigo }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
+    err.hidden = true;
+    info.textContent = `Adicionado: ${data.inicio}–${data.fim}`;
+    document.getElementById('manualAssunto').value = '';
+    aptoLocked = false;
+    await loadData(true);
+    await loadApontamentos(true, 'Atualizando assuntos…');
+  } catch (e) {
+    err.hidden = false;
+    err.textContent = 'Falha ao adicionar assunto: ' + e.message;
+    info.textContent = '';
+  }
+}
+
+async function excluirAssuntoManual(manualId) {
+  const err = document.getElementById('aptoErr');
+  const info = document.getElementById('manualMsg');
+  const day = selectedDay || (DATA && DATA.today);
+  if (!day || !manualId) return;
+  if (!confirm('Excluir este assunto manual?')) return;
+  try {
+    const res = await fetch('/api/assuntos-manuais', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ day, id: manualId, delete: true }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
+    err.hidden = true;
+    info.textContent = 'Assunto manual removido';
+    aptoLocked = false;
+    await loadData(true);
+    await loadApontamentos(true, 'Atualizando assuntos…');
+  } catch (e) {
+    err.hidden = false;
+    err.textContent = 'Falha ao excluir: ' + e.message;
+  }
 }
 
 function collectSelectedRows() {
@@ -868,6 +957,27 @@ class Handler(BaseHTTPRequestHandler):
                 else:
                     result = bd.save_wifi_presenca_dia(
                         day, payload.get("inicio") or "", payload.get("fim") or ""
+                    )
+                body = json.dumps(result, ensure_ascii=False).encode("utf-8")
+                self._send(200, body, "application/json; charset=utf-8")
+            except Exception as exc:
+                body = json.dumps({"error": str(exc)}, ensure_ascii=False).encode("utf-8")
+                self._send(400, body, "application/json; charset=utf-8")
+            return
+        if path == "/api/assuntos-manuais":
+            try:
+                payload = self._read_json()
+                day_s = payload.get("day")
+                day = date.fromisoformat(day_s) if day_s else datetime.now().astimezone().date()
+                if payload.get("delete"):
+                    result = bd.delete_assunto_manual(day, payload.get("id") or "")
+                else:
+                    result = bd.add_assunto_manual(
+                        day,
+                        payload.get("inicio") or "",
+                        payload.get("fim") or "",
+                        payload.get("assunto") or "",
+                        payload.get("codigo_chamado"),
                     )
                 body = json.dumps(result, ensure_ascii=False).encode("utf-8")
                 self._send(200, body, "application/json; charset=utf-8")
