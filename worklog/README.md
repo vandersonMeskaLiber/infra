@@ -38,7 +38,7 @@ Não versionar:
 
 ## O que faz
 
-1. **Wi‑Fi** — presença na rede do escritório  
+1. **Wi‑Fi** — presença na rede do escritório (em sleep o Mac não faz poll; ao acordar fora da rede, o `out` usa o último `last_office_seen`, não o horário do wake)  
 2. **Presença manual** — chegada/saída editáveis no painel  
 3. **Cursor** — hooks gravam prompts/sessões  
 4. **Apontamentos** — rascunho → confirmar → LAS  

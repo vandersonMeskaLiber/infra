@@ -123,10 +123,16 @@ def save_state(state: Dict[str, Any]) -> None:
     STATE_PATH.write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
-def append_event(event: str, ssid: Optional[str], gateway: Optional[str], iface: Optional[str]) -> None:
+def append_event(
+    event: str,
+    ssid: Optional[str],
+    gateway: Optional[str],
+    iface: Optional[str],
+    ts: Optional[str] = None,
+) -> None:
     LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
     row = {
-        "ts": now_iso(),
+        "ts": ts or now_iso(),
         "event": event,
         "ssid": ssid,
         "gateway": gateway,
@@ -149,21 +155,28 @@ def tick(cfg: Dict[str, Any]) -> None:
     at_office = active and is_at_office(cfg, ssid, gateway)
     state = load_state()
     was = bool(state.get("at_office"))
+    now = now_iso()
 
     if at_office and not was:
-        append_event("in", ssid, gateway, iface)
+        append_event("in", ssid, gateway, iface, ts=now)
     elif (not at_office) and was:
-        append_event("out", state.get("last_ssid"), state.get("last_gateway"), iface)
+        # Mac em sleep não faz poll: usa o último momento visto no escritório,
+        # não o horário do wake (evita presença inflada após fechar a tampa).
+        out_ts = state.get("last_office_seen") or state.get("last_check") or now
+        append_event("out", state.get("last_ssid"), state.get("last_gateway"), iface, ts=out_ts)
 
-    state.update(
-        {
-            "at_office": at_office,
-            "last_ssid": ssid if at_office else state.get("last_ssid"),
-            "last_gateway": gateway if at_office else state.get("last_gateway"),
-            "last_check": now_iso(),
-            "active": active,
-        }
-    )
+    new_state = {
+        "at_office": at_office,
+        "last_ssid": ssid if at_office else state.get("last_ssid"),
+        "last_gateway": gateway if at_office else state.get("last_gateway"),
+        "last_check": now,
+        "active": active,
+    }
+    if at_office:
+        new_state["last_office_seen"] = now
+    elif state.get("last_office_seen"):
+        new_state["last_office_seen"] = state.get("last_office_seen")
+    state.update(new_state)
     save_state(state)
 
 
