@@ -85,6 +85,54 @@ THEMES: List[Dict[str, Any]] = [
             "monitoramento",
         },
         "path_hints": ("/worklog", "/.worklog", "/infra/worklog"),
+        "sticky_inherit": True,
+        "absorb_conversation": True,
+    },
+    {
+        "id": "gestao_cha_interacoes",
+        "title": "interações e reply no chat de chamados",
+        "keywords": {
+            "whatsapp",
+            "gestao",
+            "gestão",
+            "interacao",
+            "interações",
+            "interacoes",
+            "mensagem",
+            "mensagens",
+            "responder",
+            "reply",
+            "chat",
+            "migration",
+            "detalhes",
+            "cliente",
+            "direita",
+            "icone",
+            "ícone",
+            "sugestão",
+            "sugestao",
+            "prompt",
+        },
+        "strong": {
+            "whatsapp",
+            "interações",
+            "interacoes",
+            "mensagem",
+            "mensagens",
+            "responder",
+            "gestao",
+            "gestão",
+        },
+        "path_hints": (),
+        "prompt_hints": (
+            "gestao_cha",
+            "cha_dos",
+            "whatsapp",
+            "interações",
+            "interacoes",
+        ),
+        "sticky_inherit": True,
+        "absorb_conversation": True,
     },
     {
         "id": "ia_rotina_operacional",
@@ -125,6 +173,9 @@ THEMES: List[Dict[str, Any]] = [
             "oee",
         },
         "path_hints": (),
+        # não gruda o resto da aba nem engole conversa anterior só porque apareceu "IA"
+        "sticky_inherit": False,
+        "absorb_conversation": False,
     },
 ]
 
@@ -187,6 +238,7 @@ def theme_by_id(theme_id: Optional[str]) -> Optional[Dict[str, Any]]:
 def match_theme(prompt: str, workspace: str = "") -> Optional[Dict[str, Any]]:
     toks = tokens(prompt)
     ws = (workspace or "").lower()
+    pl = (prompt or "").lower()
     best = None
     best_score = 0
     for theme in THEMES:
@@ -197,6 +249,9 @@ def match_theme(prompt: str, workspace: str = "") -> Optional[Dict[str, Any]]:
         for hint in theme.get("path_hints") or []:
             if hint.lower() in ws:
                 score += 4
+        for hint in theme.get("prompt_hints") or []:
+            if hint.lower() in pl:
+                score += 5
         if score > best_score:
             best_score = score
             best = theme
@@ -204,7 +259,13 @@ def match_theme(prompt: str, workspace: str = "") -> Optional[Dict[str, Any]]:
         return None
     # exige sinal forte o bastante (evita "tempo real" cair em IA)
     strong_hit = bool(toks & set(best.get("strong") or []))
-    if best_score >= 4 or (best_score >= 3 and strong_hit) or (best_score >= 2 and strong_hit and len(toks & set(best["keywords"])) >= 2):
+    hint_hit = any(h.lower() in pl for h in (best.get("prompt_hints") or []))
+    if (
+        best_score >= 4
+        or (best_score >= 3 and strong_hit)
+        or (best_score >= 2 and strong_hit and len(toks & set(best["keywords"])) >= 2)
+        or (hint_hit and best_score >= 5)
+    ):
         return best
     return None
 
@@ -317,8 +378,11 @@ def _resolve_theme(
         if conversation_id:
             cid_theme[conversation_id] = theme["id"]
         return theme
+    # herda tema da conversa só se o tema permitir (evita IA engolir a aba inteira)
     if conversation_id and conversation_id in cid_theme:
-        return theme_by_id(cid_theme[conversation_id])
+        prev = theme_by_id(cid_theme[conversation_id])
+        if prev and bool(prev.get("sticky_inherit", False)):
+            return prev
     return None
 
 
@@ -525,9 +589,6 @@ def rebuild_day_from_prompts(
             theme = _resolve_theme(prompt, ws, cid, cid_theme)
             if theme:
                 key = f"theme:{theme['id']}"
-            elif cid and cid in cid_theme:
-                key = f"theme:{cid_theme[cid]}"
-                theme = theme_by_id(cid_theme[cid])
             elif cid:
                 key = f"cid:{cid}"
                 theme = None
@@ -536,7 +597,7 @@ def rebuild_day_from_prompts(
                 theme = None
 
             ensure_bucket(key, prompt, cid, theme)
-            if theme and cid:
+            if theme and cid and bool(theme.get("absorb_conversation", True)):
                 absorb_cid_into_theme(cid, key)
 
             b = buckets[key]
@@ -554,10 +615,14 @@ def rebuild_day_from_prompts(
             if not cid:
                 continue
             theme_id = cid_theme.get(cid)
-            key = f"theme:{theme_id}" if theme_id else f"cid:{cid}"
+            prev = theme_by_id(theme_id) if theme_id else None
+            if theme_id and prev and bool(prev.get("absorb_conversation", True)):
+                key = f"theme:{theme_id}"
+            else:
+                key = f"cid:{cid}"
             if key not in buckets:
-                if theme_id:
-                    ensure_bucket(key, "", cid, theme_by_id(theme_id))
+                if key.startswith("theme:") and prev:
+                    ensure_bucket(key, "", cid, prev)
                 else:
                     continue
             touch(key, ts)
