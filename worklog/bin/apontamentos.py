@@ -1092,11 +1092,40 @@ def colocar_duracao_evitando_bloqueios(
     return parts
 
 
+def work_gap_blockers(
+    wifi_intervals: List[Dict[str, Any]],
+) -> List[Tuple[datetime, datetime]]:
+    """Lacunas entre janelas de trabalho viram bloqueio na distribuição."""
+    parsed: List[Tuple[datetime, datetime]] = []
+    for w in wifi_intervals or []:
+        try:
+            ws = _as_naive(ds.parse_ts(w["start"]))
+            we = _as_naive(ds.parse_ts(w["end"]))
+        except Exception:
+            continue
+        if we > ws:
+            parsed.append((ws, we))
+    parsed.sort(key=lambda x: x[0])
+    gaps: List[Tuple[datetime, datetime]] = []
+    for i in range(len(parsed) - 1):
+        a1 = parsed[i][1]
+        b0 = parsed[i + 1][0]
+        if b0 > a1:
+            gaps.append((a1, b0))
+    return gaps
+
+
+def _assunto_grupo_key(assunto: Any, fallback_id: Any = None) -> str:
+    s = str(assunto or "").strip()
+    s = re.sub(r"\s*\(restante\)\s*$", "", s, flags=re.IGNORECASE).strip()
+    return s or str(fallback_id or "")
+
+
 def distribuir_tempo_wifi(day: date, cfg: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """
-    Distribui o tempo de Wi‑Fi sem assunto de forma proporcional entre os assuntos.
+    Redistribui assuntos para preencher o tempo útil das janelas de trabalho.
     Só altera rascunhos editáveis (não enviados / não inválidos). Não grava no LAS.
-    Se um assunto atravessar o almoço, é dividido em dois apontamentos.
+    Respeita almoço e lacunas entre janelas.
     """
     cfg = cfg or load_config()
     ap = apontamento_cfg(cfg)
@@ -1108,11 +1137,18 @@ def distribuir_tempo_wifi(day: date, cfg: Optional[Dict[str, Any]] = None) -> Di
     data = bd.build_data()
     day_data = data.get("by_day", {}).get(day_s) or {}
     wifi_intervals = day_data.get("wifi") or []
-    wifi_bruto, almoco_sec, wifi_sec = wifi_seconds_uteis(wifi_intervals, day, cfg)
+    # wifi no payload já vem partido pelo almoço → tempo útil = soma dos blocos
+    wifi_bruto = int(sum(int(w.get("seconds") or 0) for w in wifi_intervals))
+    if wifi_bruto <= 0:
+        wifi_bruto, _almoco_sec, wifi_sec = wifi_seconds_uteis(wifi_intervals, day, cfg)
+    else:
+        wifi_sec = wifi_bruto
     lunch0, lunch1 = almoco_bounds(day, cfg)
     almoco_info = almoco_do_dia(day, cfg)
     blockers = merge_blockers(
-        sent_blockers_for_day(day, usuario_id, ap) + db_blockers_for_day(day, usuario_id, ap)
+        sent_blockers_for_day(day, usuario_id, ap)
+        + db_blockers_for_day(day, usuario_id, ap)
+        + work_gap_blockers(wifi_intervals)
     )
 
     drafts = payload.get("drafts") or []
@@ -1126,10 +1162,10 @@ def distribuir_tempo_wifi(day: date, cfg: Optional[Dict[str, Any]] = None) -> Di
     if wifi_sec <= 0:
         payload["distribuicao"] = {
             "ok": False,
-            "message": "Sem tempo útil de Wi‑Fi no dia (após descontar almoço)",
+            "message": "Sem tempo útil de trabalho no dia (defina as janelas)",
             "wifi_total": ds.fmt_dur(wifi_bruto),
             "wifi_util": ds.fmt_dur(0),
-            "almoco": ds.fmt_dur(almoco_sec),
+            "almoco": f"{almoco_info['inicio']}–{almoco_info['fim']}",
             "assuntos_total": ds.fmt_dur(assuntos_sec),
             "ocioso": ds.fmt_dur(0),
         }
@@ -1141,7 +1177,7 @@ def distribuir_tempo_wifi(day: date, cfg: Optional[Dict[str, Any]] = None) -> Di
             "message": "Nenhum assunto editável para receber a distribuição",
             "wifi_total": ds.fmt_dur(wifi_bruto),
             "wifi_util": ds.fmt_dur(wifi_sec),
-            "almoco": ds.fmt_dur(almoco_sec),
+            "almoco": f"{almoco_info['inicio']}–{almoco_info['fim']}",
             "assuntos_total": ds.fmt_dur(assuntos_sec),
             "ocioso": ds.fmt_dur(gap),
         }
@@ -1150,24 +1186,26 @@ def distribuir_tempo_wifi(day: date, cfg: Optional[Dict[str, Any]] = None) -> Di
     if gap <= 0:
         payload["distribuicao"] = {
             "ok": False,
-            "message": "Não há tempo ocioso: assuntos já cobrem o Wi‑Fi útil (sem almoço)",
+            "message": "Não há tempo ocioso: assuntos já cobrem o tempo útil de trabalho",
             "wifi_total": ds.fmt_dur(wifi_bruto),
             "wifi_util": ds.fmt_dur(wifi_sec),
-            "almoco": ds.fmt_dur(almoco_sec),
+            "almoco": f"{almoco_info['inicio']}–{almoco_info['fim']}",
             "assuntos_total": ds.fmt_dur(assuntos_sec),
             "ocioso": ds.fmt_dur(0),
         }
         return payload
 
-    # Agrupa editáveis pelo assunto original (mesmo tópico pode já estar partido pelo almoço)
+    # Agrupa editáveis pelo assunto (ignora sufixo "restante")
     grupos: Dict[str, Dict[str, Any]] = {}
     ordem_grupos: List[str] = []
     for d in sorted(editaveis, key=lambda x: x.get("hora_inicio") or ""):
-        gkey = str(d.get("assunto") or d.get("id"))
+        gkey = _assunto_grupo_key(d.get("assunto"), d.get("id"))
         if gkey not in grupos:
+            template = dict(d)
+            template["assunto"] = gkey
             grupos[gkey] = {
                 "seconds": 0,
-                "template": d,
+                "template": template,
                 "hora_inicio": d.get("hora_inicio"),
             }
             ordem_grupos.append(gkey)
@@ -1204,7 +1242,6 @@ def distribuir_tempo_wifi(day: date, cfg: Optional[Dict[str, Any]] = None) -> Di
         )
         wifi_end = None
 
-    # pula início se já estiver em intervalo apontado
     for b0, b1 in merge_blockers(blockers):
         if b0 <= cursor < b1:
             cursor = arredondar_hora_cinco_minutos(b1)
@@ -1212,6 +1249,7 @@ def distribuir_tempo_wifi(day: date, cfg: Optional[Dict[str, Any]] = None) -> Di
     expanded: List[Dict[str, Any]] = []
     for gkey, alvo_sec in zip(ordem_grupos, alvos):
         template = grupos[gkey]["template"]
+        base_label = _assunto_grupo_key(template.get("assunto"), gkey)
         segs = colocar_duracao_evitando_bloqueios(
             cursor,
             alvo_sec,
@@ -1233,7 +1271,9 @@ def distribuir_tempo_wifi(day: date, cfg: Optional[Dict[str, Any]] = None) -> Di
             row["seconds"] = seconds
             row["minutes"] = max(1, seconds // 60)
             row["dur"] = ds.fmt_dur(seconds)
+            row["assunto"] = base_label if si == 0 else f"{base_label} (restante)"
             row["distribuido"] = True
+            row["hora_editada"] = False
             row["already_sent"] = False
             row["invalido_las"] = False
             row["key"] = draft_key(row)
@@ -1254,12 +1294,14 @@ def distribuir_tempo_wifi(day: date, cfg: Optional[Dict[str, Any]] = None) -> Di
     payload["count"] = len(merged)
     payload["almoco"] = almoco_info
     novo_assuntos = int(sum(int(d.get("seconds") or 0) for d in merged if not d.get("invalido_las")))
+    n_janelas = len(wifi_intervals)
     payload["distribuicao"] = {
         "ok": True,
         "message": (
-            f"Distribuídos {ds.fmt_dur(gap)} ociosos "
-            f"(Wi‑Fi {ds.fmt_dur(wifi_bruto)} − almoço {almoco_info['inicio']}–{almoco_info['fim']}) "
-            f"em {len(ordem_grupos)} assunto(s) → {len(expanded)} bloco(s) "
+            f"Tempo de trabalho redistribuído: {ds.fmt_dur(gap)} ociosos "
+            f"em {n_janelas} janela(s) ({ds.fmt_dur(wifi_sec)} útil, "
+            f"almoço {almoco_info['inicio']}–{almoco_info['fim']}) "
+            f"→ {len(ordem_grupos)} assunto(s) / {len(expanded)} bloco(s) "
             f"({ds.fmt_dur(assuntos_sec)} → {ds.fmt_dur(novo_assuntos)})"
         ),
         "wifi_total": ds.fmt_dur(wifi_bruto),
@@ -1268,6 +1310,7 @@ def distribuir_tempo_wifi(day: date, cfg: Optional[Dict[str, Any]] = None) -> Di
         "assuntos_antes": ds.fmt_dur(assuntos_sec),
         "assuntos_depois": ds.fmt_dur(novo_assuntos),
         "ocioso": ds.fmt_dur(gap),
+        "janelas": n_janelas,
     }
     return payload
 

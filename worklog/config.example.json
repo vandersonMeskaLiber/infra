@@ -5,6 +5,8 @@
   "office_gateways": [
     "192.168.244.1"
   ],
+  "home_ssids": [],
+  "home_gateways": [],
   "match_mode": "any",
   "wifi_interface": "en0",
   "poll_seconds": 60,

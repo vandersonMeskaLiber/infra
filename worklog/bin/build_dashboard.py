@@ -18,6 +18,7 @@ OUT_HTML = WORKLOG_DIR / "dashboard.html"
 STATE_PATH = WORKLOG_DIR / "logs" / "state" / "wifi_state.json"
 WIFI_PRESENCA_PATH = WORKLOG_DIR / "logs" / "wifi_presenca.json"
 ASSUNTOS_MANUAIS_PATH = WORKLOG_DIR / "logs" / "assuntos_manuais.json"
+ALMOCO_PATH = WORKLOG_DIR / "logs" / "almoco.json"
 
 # reusa a lógica do daily_summary (mesmo diretório)
 if str(SCRIPT_DIR) not in sys.path:
@@ -61,20 +62,129 @@ def _fmt_hm(h: int, m: int) -> str:
     return f"{h:02d}:{m:02d}"
 
 
-def save_wifi_presenca_dia(day: date, inicio: str, fim: str) -> Dict[str, Any]:
-    pi = _parse_hm(inicio)
-    pf = _parse_hm(fim)
-    if not pi or not pf:
-        raise ValueError("Horário inválido (use HH:MM)")
-    ini_s = _fmt_hm(*pi)
-    fim_s = _fmt_hm(*pf)
-    if (pi[0], pi[1]) >= (pf[0], pf[1]):
-        raise ValueError("Saída deve ser maior que a chegada")
+def load_almoco_overrides() -> Dict[str, Any]:
+    if not ALMOCO_PATH.exists():
+        return {}
+    try:
+        data = json.loads(ALMOCO_PATH.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def almoco_do_dia(day: date, cfg: Dict[str, Any]) -> Dict[str, str]:
+    bloco = cfg.get("almoco") or {}
+    inicio = str(bloco.get("inicio") or "12:10")
+    fim = str(bloco.get("fim") or "13:00")
+    ov = load_almoco_overrides().get(day.isoformat()) or {}
+    if ov.get("inicio"):
+        inicio = str(ov["inicio"])
+    if ov.get("fim"):
+        fim = str(ov["fim"])
+    if not _parse_hm(inicio):
+        inicio = "12:10"
+    if not _parse_hm(fim):
+        fim = "13:00"
+    return {"inicio": inicio, "fim": fim}
+
+
+def almoco_bounds_tz(
+    day: date, cfg: Dict[str, Any], tz
+) -> tuple:
+    info = almoco_do_dia(day, cfg)
+    pi = _parse_hm(info["inicio"])
+    pf = _parse_hm(info["fim"])
+    assert pi and pf
+    lunch0 = datetime(day.year, day.month, day.day, pi[0], pi[1], 0, tzinfo=tz)
+    lunch1 = datetime(day.year, day.month, day.day, pf[0], pf[1], 0, tzinfo=tz)
+    return lunch0, lunch1, info
+
+
+def split_intervals_around_lunch(
+    intervals: List[ds.Interval], lunch0: datetime, lunch1: datetime
+) -> List[ds.Interval]:
+    """Parte cada janela que cruza o almoço em antes + depois."""
+    if lunch1 <= lunch0:
+        return list(intervals)
+    out: List[ds.Interval] = []
+    for iv in intervals:
+        if iv.end <= lunch0 or iv.start >= lunch1:
+            out.append(iv)
+            continue
+        if iv.start < lunch0:
+            end_am = min(iv.end, lunch0)
+            if end_am > iv.start:
+                out.append(ds.Interval(iv.start, end_am, label=iv.label))
+        if iv.end > lunch1:
+            start_pm = max(iv.start, lunch1)
+            if iv.end > start_pm:
+                out.append(ds.Interval(start_pm, iv.end, label=iv.label))
+    return out
+
+
+def normalize_presenca_intervalos(raw: Any) -> List[Dict[str, str]]:
+    """Aceita lista nova ou formato legado {inicio,fim} → lista de intervalos."""
+    items: List[Any] = []
+    if isinstance(raw, list):
+        items = raw
+    elif isinstance(raw, dict):
+        if isinstance(raw.get("intervalos"), list):
+            items = raw["intervalos"]
+        elif raw.get("inicio") and raw.get("fim"):
+            items = [raw]
+    out: List[Dict[str, str]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        pi = _parse_hm(str(item.get("inicio") or ""))
+        pf = _parse_hm(str(item.get("fim") or ""))
+        if not pi or not pf:
+            continue
+        if (pi[0], pi[1]) >= (pf[0], pf[1]):
+            continue
+        row = {
+            "inicio": _fmt_hm(*pi),
+            "fim": _fmt_hm(*pf),
+            "label": str(item.get("label") or "presença manual").strip() or "presença manual",
+        }
+        place = str(item.get("place") or "").strip().lower()
+        if place in {"office", "home"}:
+            row["place"] = place
+        out.append(row)
+    out.sort(key=lambda x: x["inicio"])
+    return out
+
+
+def save_wifi_presenca_dia(
+    day: date,
+    inicio: str = "",
+    fim: str = "",
+    intervalos: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
+    if intervalos is not None:
+        cleaned = normalize_presenca_intervalos(intervalos)
+    else:
+        cleaned = normalize_presenca_intervalos({"inicio": inicio, "fim": fim})
+    if not cleaned:
+        raise ValueError("Informe ao menos um intervalo válido (início < fim)")
+    # valida sobreposição
+    for i in range(len(cleaned) - 1):
+        if cleaned[i]["fim"] > cleaned[i + 1]["inicio"]:
+            raise ValueError(
+                f"Intervalos se sobrepõem: {cleaned[i]['inicio']}–{cleaned[i]['fim']} "
+                f"e {cleaned[i + 1]['inicio']}–{cleaned[i + 1]['fim']}"
+            )
     data = load_wifi_presenca_overrides()
-    data[day.isoformat()] = {"inicio": ini_s, "fim": fim_s}
+    data[day.isoformat()] = {"manual": True, "intervalos": cleaned}
     WIFI_PRESENCA_PATH.parent.mkdir(parents=True, exist_ok=True)
     WIFI_PRESENCA_PATH.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    return {"day": day.isoformat(), "inicio": ini_s, "fim": fim_s, "manual": True}
+    return {
+        "day": day.isoformat(),
+        "manual": True,
+        "intervalos": cleaned,
+        "inicio": cleaned[0]["inicio"],
+        "fim": cleaned[-1]["fim"],
+    }
 
 
 def clear_wifi_presenca_dia(day: date) -> Dict[str, Any]:
@@ -260,8 +370,77 @@ def _carve_auto_topics_around_manuals(
     return carved
 
 
+def _carve_topics_to_work_windows(
+    topics: List[Dict[str, Any]],
+    work_intervals: List[ds.Interval],
+    min_minutes: int = 5,
+) -> List[Dict[str, Any]]:
+    """
+    Recorta assuntos às janelas de trabalho (já sem almoço).
+    Se um assunto atravessa lacuna (ex.: 15:30–16:00), vira partes dentro das janelas.
+    """
+    if not topics:
+        return []
+    if not work_intervals:
+        return list(topics)
+
+    windows = [(iv.start, iv.end) for iv in work_intervals if iv.end > iv.start]
+    if not windows:
+        return list(topics)
+
+    min_sec = max(1, int(min_minutes)) * 60
+    carved: List[Dict[str, Any]] = []
+    for t in topics:
+        try:
+            start = ds.parse_ts(t["start"])
+            end = ds.parse_ts(t["end"])
+        except Exception:
+            continue
+        if end <= start:
+            continue
+
+        parts: List[tuple] = []
+        for w0, w1 in windows:
+            if start.tzinfo is not None and w0.tzinfo is None:
+                w0 = w0.replace(tzinfo=start.tzinfo)
+                w1 = w1.replace(tzinfo=start.tzinfo)
+            elif start.tzinfo is None and w0.tzinfo is not None:
+                start = start.replace(tzinfo=w0.tzinfo)
+                end = end.replace(tzinfo=w0.tzinfo)
+            a0, a1 = max(start, w0), min(end, w1)
+            if a1 > a0:
+                parts.append((a0, a1))
+
+        base_label = str(t.get("label") or "").strip() or "Assunto"
+        for i, (a0, a1) in enumerate(parts):
+            seconds = max(0, int((a1 - a0).total_seconds()))
+            if seconds < min_sec:
+                continue
+            piece = dict(t)
+            label = base_label
+            if i > 0 and "(restante)" not in label.lower():
+                label = f"{base_label} (restante)"
+            piece_id = t.get("id")
+            if piece_id and i > 0:
+                piece["id"] = f"{piece_id}-janela-{i}"
+            piece.update(
+                {
+                    "start": a0.isoformat(),
+                    "end": a1.isoformat(),
+                    "start_hm": ds.fmt_hm(a0),
+                    "end_hm": ds.fmt_hm(a1),
+                    "dur": ds.fmt_dur(seconds),
+                    "seconds": seconds,
+                    "label": label,
+                }
+            )
+            carved.append(piece)
+    carved.sort(key=lambda x: (x.get("start") or "", x.get("end") or ""))
+    return carved
+
+
 def _manual_wifi_interval(
-    day: date, inicio: str, fim: str, now: datetime, cfg: Dict[str, Any]
+    day: date, inicio: str, fim: str, now: datetime, cfg: Dict[str, Any], label: str = ""
 ) -> ds.Interval:
     pi = _parse_hm(inicio)
     pf = _parse_hm(fim)
@@ -275,11 +454,30 @@ def _manual_wifi_interval(
         end = now
     if end <= start:
         end = start + timedelta(minutes=1)
-    label = "presença manual"
-    ssids = cfg.get("office_ssids") or []
-    if ssids:
-        label = f"{ssids[0]} (manual)"
-    return ds.Interval(start, end, label=label)
+    lbl = (label or "").strip()
+    if not lbl:
+        ssids = cfg.get("office_ssids") or []
+        lbl = f"{ssids[0]} (manual)" if ssids else "presença manual"
+    return ds.Interval(start, end, label=lbl)
+
+
+def _intervals_from_presenca_override(
+    day: date, ov: Dict[str, Any], now: datetime, cfg: Dict[str, Any]
+) -> List[ds.Interval]:
+    cleaned = normalize_presenca_intervalos(ov)
+    out: List[ds.Interval] = []
+    for item in cleaned:
+        out.append(
+            _manual_wifi_interval(
+                day,
+                item["inicio"],
+                item["fim"],
+                now,
+                cfg,
+                label=item.get("label") or "",
+            )
+        )
+    return out
 
 
 def available_days(wifi_rows: List[Dict], cursor_rows: List[Dict], today: date) -> List[str]:
@@ -290,12 +488,13 @@ def available_days(wifi_rows: List[Dict], cursor_rows: List[Dict], today: date) 
                 days.add(ds.parse_ts(row["ts"]).date().isoformat())
             except Exception:
                 continue
-    for day_s in load_wifi_presenca_overrides().keys():
+    for day_s, ov in load_wifi_presenca_overrides().items():
         try:
             date.fromisoformat(str(day_s))
-            days.add(str(day_s))
         except Exception:
             continue
+        if normalize_presenca_intervalos(ov):
+            days.add(str(day_s))
     for day_s, items in load_assuntos_manuais().items():
         try:
             date.fromisoformat(str(day_s))
@@ -312,18 +511,46 @@ def day_payload(day: date, cfg: Dict[str, Any], wifi_rows, cursor_rows, now: dat
     day_start, day_end = ds.day_bounds(day)
     wifi_auto = ds.build_wifi_intervals(wifi_rows, day_start, day_end, gap_ignore, now)
 
-    detectado_inicio = ds.fmt_hm(wifi_auto[0].start) if wifi_auto else None
-    detectado_fim = ds.fmt_hm(wifi_auto[-1].end) if wifi_auto else None
+    detectado_intervalos = [
+        {
+            "inicio": ds.fmt_hm(iv.start),
+            "fim": ds.fmt_hm(iv.end),
+            "label": iv.label or "",
+            "dur": ds.fmt_dur(iv.seconds),
+            "seconds": iv.seconds,
+        }
+        for iv in wifi_auto
+    ]
+    detectado_inicio = detectado_intervalos[0]["inicio"] if detectado_intervalos else None
+    detectado_fim = detectado_intervalos[-1]["fim"] if detectado_intervalos else None
 
     ov = load_wifi_presenca_overrides().get(day.isoformat()) or {}
-    manual = bool(ov.get("inicio") and ov.get("fim"))
+    manual_items = normalize_presenca_intervalos(ov)
+    manual = bool(manual_items)
     if manual:
-        wifi = [_manual_wifi_interval(day, str(ov["inicio"]), str(ov["fim"]), now, cfg)]
-        # mantém no payload a saída salva (mesmo se clampou ao agora no intervalo)
-        inicio_ui = str(ov["inicio"])
-        fim_ui = str(ov["fim"])
+        wifi = _intervals_from_presenca_override(day, ov, now, cfg)
+        trabalho_ui = [
+            {
+                "inicio": item["inicio"],
+                "fim": item["fim"],
+                "label": item.get("label") or "",
+                "place": item.get("place") or "",
+            }
+            for item in manual_items
+        ]
+        inicio_ui = trabalho_ui[0]["inicio"]
+        fim_ui = trabalho_ui[-1]["fim"]
     else:
         wifi = wifi_auto
+        trabalho_ui = [
+            {
+                "inicio": x["inicio"],
+                "fim": x["fim"],
+                "label": x.get("label") or "",
+                "place": "",
+            }
+            for x in detectado_intervalos
+        ]
         inicio_ui = detectado_inicio
         fim_ui = detectado_fim
 
@@ -337,7 +564,14 @@ def day_payload(day: date, cfg: Dict[str, Any], wifi_rows, cursor_rows, now: dat
     topics = ds.build_topics(cursor_rows, day_start, day_end, topic_gap, fallback_end, cfg)
     label = ds.dominant_wifi_label(wifi, cfg)
 
+    first_in = ds.fmt_hm(wifi[0].start) if wifi else None
+    last_out = ds.fmt_hm(wifi[-1].end) if wifi else None
+    wifi_bruto_sec = sum(iv.seconds for iv in wifi)
+    lunch0, lunch1, almoco_info = almoco_bounds_tz(day, cfg, now.tzinfo)
+    wifi = split_intervals_around_lunch(wifi, lunch0, lunch1)
     wifi_total = sum(iv.seconds for iv in wifi)
+    almoco_sec = max(0, wifi_bruto_sec - wifi_total)
+
     auto_topics: List[Dict[str, Any]] = [
         {
             "start": iv.start.isoformat(),
@@ -362,24 +596,36 @@ def day_payload(day: date, cfg: Dict[str, Any], wifi_rows, cursor_rows, now: dat
     auto_topics = _carve_auto_topics_around_manuals(auto_topics, manual_topics, min_minutes)
     topics_out = auto_topics + manual_topics
     topics_out.sort(key=lambda t: (t.get("start") or "", t.get("end") or "", 0 if t.get("manual") else 1))
+    # Assuntos só dentro das janelas de trabalho (já sem almoço)
+    topics_out = _carve_topics_to_work_windows(topics_out, wifi, min_minutes)
     topic_total = sum(int(t.get("seconds") or 0) for t in topics_out)
 
     return {
         "date": day.isoformat(),
         "wifi_label": label,
-        "first_in": ds.fmt_hm(wifi[0].start) if wifi else None,
-        "last_out": ds.fmt_hm(wifi[-1].end) if wifi else None,
+        "first_in": first_in,
+        "last_out": last_out,
         "wifi_total_sec": wifi_total,
         "wifi_total": ds.fmt_dur(wifi_total),
+        "wifi_bruto_sec": wifi_bruto_sec,
+        "wifi_bruto": ds.fmt_dur(wifi_bruto_sec),
+        "almoco_sec": almoco_sec,
+        "almoco": {
+            "inicio": almoco_info["inicio"],
+            "fim": almoco_info["fim"],
+            "dur": ds.fmt_dur(almoco_sec),
+        },
         "topic_total_sec": topic_total,
         "topic_total": ds.fmt_dur(topic_total),
         "wifi_presenca": {
             "inicio": inicio_ui,
             "fim": fim_ui,
             "manual": manual,
+            "intervalos": trabalho_ui,
             "detectado": {
                 "inicio": detectado_inicio,
                 "fim": detectado_fim,
+                "intervalos": detectado_intervalos,
             },
         },
         "wifi": [
@@ -393,6 +639,18 @@ def day_payload(day: date, cfg: Dict[str, Any], wifi_rows, cursor_rows, now: dat
                 "label": iv.label,
             }
             for iv in wifi
+        ],
+        "wifi_detectado": [
+            {
+                "start": iv.start.isoformat(),
+                "end": iv.end.isoformat(),
+                "start_hm": ds.fmt_hm(iv.start),
+                "end_hm": ds.fmt_hm(iv.end),
+                "dur": ds.fmt_dur(iv.seconds),
+                "seconds": iv.seconds,
+                "label": iv.label,
+            }
+            for iv in wifi_auto
         ],
         "topics": topics_out,
     }
@@ -411,12 +669,17 @@ def build_data() -> Dict[str, Any]:
         by_day[d] = day_payload(day, cfg, wifi_rows, cursor_rows, now)
 
     state = load_state()
+    at_work = bool(state.get("at_work") if "at_work" in state else state.get("at_office"))
+    place = state.get("place")
     return {
         "generated_at": now.isoformat(timespec="seconds"),
         "today": today.isoformat(),
         "at_office": bool(state.get("at_office")),
+        "at_work": at_work,
+        "place": place,
         "last_check": state.get("last_check"),
         "last_gateway": state.get("last_gateway"),
+        "last_ssid": state.get("last_ssid"),
         "days": days,
         "by_day": by_day,
     }

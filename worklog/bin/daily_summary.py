@@ -91,7 +91,8 @@ def merge_short_gaps(intervals: List[Interval], gap_ignore: int) -> List[Interva
     for cur in intervals[1:]:
         prev = merged[-1]
         gap = (cur.start - prev.end).total_seconds()
-        if gap < gap_ignore:
+        same_label = (not cur.label) or (not prev.label) or (cur.label == prev.label)
+        if gap < gap_ignore and same_label:
             prev.end = max(prev.end, cur.end)
         else:
             merged.append(cur)
@@ -105,7 +106,7 @@ def build_wifi_intervals(
     gap_ignore: int,
     now: datetime,
 ) -> List[Interval]:
-    events: List[Tuple[datetime, str, Optional[str]]] = []
+    events: List[Tuple[datetime, str, Optional[str], Optional[str]]] = []
     for row in rows:
         try:
             ts = parse_ts(row["ts"])
@@ -117,27 +118,48 @@ def build_wifi_intervals(
         if event not in {"in", "out"}:
             continue
         ssid = row.get("ssid")
-        events.append((ts, event, ssid))
+        place = row.get("place")
+        events.append((ts, event, ssid, place))
 
     events.sort(key=lambda x: x[0])
     intervals: List[Interval] = []
     open_start: Optional[datetime] = None
     last_ssid = None
+    last_place = None
 
-    for ts, event, ssid in events:
+    def _label(ssid: Optional[str], place: Optional[str]) -> str:
+        if ssid:
+            return str(ssid)
+        if place == "home":
+            return "Casa"
+        if place == "office":
+            return "Escritório"
+        return ""
+
+    for ts, event, ssid, place in events:
         if event == "in":
             if open_start is None:
                 open_start = ts
                 last_ssid = ssid or last_ssid
+                last_place = place or last_place
+            elif place and last_place and place != last_place:
+                # in sem out ao trocar de rede — fecha o anterior
+                intervals.append(Interval(open_start, ts, label=_label(last_ssid, last_place)))
+                open_start = ts
+                last_ssid = ssid or last_ssid
+                last_place = place
+            else:
+                last_ssid = ssid or last_ssid
+                last_place = place or last_place
         elif event == "out" and open_start is not None:
-            intervals.append(Interval(open_start, ts, label=str(last_ssid or "")))
+            intervals.append(Interval(open_start, ts, label=_label(last_ssid or ssid, last_place or place)))
             open_start = None
 
     # ainda conectado no fim do dia / agora
     if open_start is not None:
         end = min(now, day_end - timedelta(seconds=1))
         if end > open_start:
-            intervals.append(Interval(open_start, end, label=str(last_ssid or "")))
+            intervals.append(Interval(open_start, end, label=_label(last_ssid, last_place)))
 
     return merge_short_gaps(intervals, gap_ignore)
 

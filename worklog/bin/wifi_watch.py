@@ -88,11 +88,18 @@ def is_iface_active(iface: str) -> bool:
     return "status: active" in text
 
 
-def is_at_office(cfg: Dict[str, Any], ssid: Optional[str], gateway: Optional[str]) -> bool:
-    ssids = {s.lower() for s in cfg.get("office_ssids", [])}
-    gateways = set(cfg.get("office_gateways", []))
+def _match_network(
+    cfg: Dict[str, Any],
+    ssid: Optional[str],
+    gateway: Optional[str],
+    ssid_key: str,
+    gateway_key: str,
+) -> bool:
+    ssids = {s.lower() for s in cfg.get(ssid_key, []) if s}
+    gateways = {g for g in cfg.get(gateway_key, []) if g}
+    if not ssids and not gateways:
+        return False
     mode = cfg.get("match_mode", "any")
-
     ssid_ok = bool(ssid and ssid.lower() in ssids)
     gw_ok = bool(gateway and gateway in gateways)
 
@@ -101,12 +108,27 @@ def is_at_office(cfg: Dict[str, Any], ssid: Optional[str], gateway: Optional[str
     if mode == "gateway":
         return gw_ok
     if mode == "all":
-        # se SSID indisponível, cai para gateway
         if ssid is None:
             return gw_ok
         return ssid_ok and gw_ok
-    # any (default)
     return ssid_ok or gw_ok
+
+
+def is_at_office(cfg: Dict[str, Any], ssid: Optional[str], gateway: Optional[str]) -> bool:
+    return _match_network(cfg, ssid, gateway, "office_ssids", "office_gateways")
+
+
+def is_at_home(cfg: Dict[str, Any], ssid: Optional[str], gateway: Optional[str]) -> bool:
+    return _match_network(cfg, ssid, gateway, "home_ssids", "home_gateways")
+
+
+def classify_place(cfg: Dict[str, Any], ssid: Optional[str], gateway: Optional[str]) -> Optional[str]:
+    """Retorna 'office', 'home' ou None. Escritório tem prioridade se ambos baterem."""
+    if is_at_office(cfg, ssid, gateway):
+        return "office"
+    if is_at_home(cfg, ssid, gateway):
+        return "home"
+    return None
 
 
 def load_state() -> Dict[str, Any]:
@@ -115,7 +137,7 @@ def load_state() -> Dict[str, Any]:
             return json.loads(STATE_PATH.read_text(encoding="utf-8"))
         except Exception:
             pass
-    return {"at_office": False, "last_ssid": None, "last_gateway": None}
+    return {"at_office": False, "at_work": False, "place": None, "last_ssid": None, "last_gateway": None}
 
 
 def save_state(state: Dict[str, Any]) -> None:
@@ -129,6 +151,7 @@ def append_event(
     gateway: Optional[str],
     iface: Optional[str],
     ts: Optional[str] = None,
+    place: Optional[str] = None,
 ) -> None:
     LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
     row = {
@@ -138,6 +161,8 @@ def append_event(
         "gateway": gateway,
         "iface": iface,
     }
+    if place:
+        row["place"] = place
     with open(LOG_PATH, "a", encoding="utf-8") as f:
         f.write(json.dumps(row, ensure_ascii=False) + "\n")
 
@@ -152,30 +177,61 @@ def tick(cfg: Dict[str, Any]) -> None:
     if not active:
         gateway = None
 
-    at_office = active and is_at_office(cfg, ssid, gateway)
+    place = classify_place(cfg, ssid, gateway) if active else None
+    at_office = place == "office"
+    at_work = place is not None
     state = load_state()
-    was = bool(state.get("at_office"))
+    was = bool(state.get("at_work") if "at_work" in state else state.get("at_office"))
+    prev_place = state.get("place")
     now = now_iso()
 
-    if at_office and not was:
-        append_event("in", ssid, gateway, iface, ts=now)
-    elif (not at_office) and was:
-        # Mac em sleep não faz poll: usa o último momento visto no escritório,
+    if at_work and not was:
+        append_event("in", ssid, gateway, iface, ts=now, place=place)
+    elif at_work and was and place and prev_place and place != prev_place:
+        # trocou escritório ↔ casa: fecha o intervalo anterior e abre o novo
+        out_ts = state.get("last_work_seen") or state.get("last_office_seen") or state.get("last_check") or now
+        append_event(
+            "out",
+            state.get("last_ssid"),
+            state.get("last_gateway"),
+            iface,
+            ts=out_ts,
+            place=prev_place,
+        )
+        append_event("in", ssid, gateway, iface, ts=now, place=place)
+    elif (not at_work) and was:
+        # Mac em sleep não faz poll: usa o último momento visto na rede rastreada,
         # não o horário do wake (evita presença inflada após fechar a tampa).
-        out_ts = state.get("last_office_seen") or state.get("last_check") or now
-        append_event("out", state.get("last_ssid"), state.get("last_gateway"), iface, ts=out_ts)
+        out_ts = state.get("last_work_seen") or state.get("last_office_seen") or state.get("last_check") or now
+        append_event(
+            "out",
+            state.get("last_ssid"),
+            state.get("last_gateway"),
+            iface,
+            ts=out_ts,
+            place=prev_place,
+        )
 
     new_state = {
         "at_office": at_office,
-        "last_ssid": ssid if at_office else state.get("last_ssid"),
-        "last_gateway": gateway if at_office else state.get("last_gateway"),
+        "at_work": at_work,
+        "place": place,
+        "last_ssid": ssid if at_work else state.get("last_ssid"),
+        "last_gateway": gateway if at_work else state.get("last_gateway"),
         "last_check": now,
         "active": active,
     }
-    if at_office:
-        new_state["last_office_seen"] = now
-    elif state.get("last_office_seen"):
-        new_state["last_office_seen"] = state.get("last_office_seen")
+    if at_work:
+        new_state["last_work_seen"] = now
+        if at_office:
+            new_state["last_office_seen"] = now
+        elif state.get("last_office_seen"):
+            new_state["last_office_seen"] = state.get("last_office_seen")
+    else:
+        if state.get("last_work_seen"):
+            new_state["last_work_seen"] = state.get("last_work_seen")
+        if state.get("last_office_seen"):
+            new_state["last_office_seen"] = state.get("last_office_seen")
     state.update(new_state)
     save_state(state)
 

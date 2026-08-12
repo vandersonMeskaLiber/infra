@@ -52,7 +52,58 @@ LIVE_HTML = r"""<!DOCTYPE html>
       radial-gradient(700px 380px at 100% 0%, rgba(0,194,168,.12), transparent 50%),
       var(--bg);
   }
-  .wrap { max-width: 1100px; margin: 0 auto; padding: 28px 20px 48px; }
+  .wrap { max-width: min(1680px, 98vw); margin: 0 auto; padding: 24px 16px 48px; }
+  .apto-horarios {
+    display: flex; flex-direction: row; flex-wrap: nowrap; align-items: center; gap: 6px;
+    white-space: nowrap;
+  }
+  .apto-horarios input.apto-hi,
+  .apto-horarios input.apto-hf {
+    width: 4.6rem; min-width: 4.6rem; max-width: 4.6rem;
+    box-sizing: border-box;
+    background: var(--bg2); color: var(--text);
+    border: 1px solid var(--line); border-radius: 8px;
+    padding: 6px 8px; font-family: var(--mono); font-size: .85rem;
+    text-align: center;
+  }
+  #aptoTableWrap table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+  #aptoTableWrap th,
+  #aptoTableWrap td { vertical-align: middle; overflow: hidden; }
+  #aptoTableWrap .apto-col-ok { width: 44px; }
+  #aptoTableWrap .apto-col-hora { width: 200px; }
+  #aptoTableWrap .apto-col-dur {
+    width: 72px; color: var(--accent2); font-family: var(--mono);
+    white-space: nowrap;
+  }
+  #aptoTableWrap th.apto-col-dur { color: var(--muted); font-family: inherit; }
+  #aptoTableWrap .apto-col-assunto { width: auto; }
+  #aptoTableWrap .apto-col-cha { width: 150px; }
+  #aptoTableWrap .apto-col-act { width: 72px; }
+  tr.apto-pausa td {
+    padding: 8px 10px !important;
+    background: rgba(148, 163, 184, 0.12);
+    border-top: 1px dashed #475569;
+    border-bottom: 1px dashed #475569;
+    color: var(--muted);
+    font-size: .82rem;
+  }
+  tr.apto-pausa .apto-pausa-label {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    font-family: var(--mono);
+  }
+  tr.apto-pausa .apto-pausa-tag {
+    display: inline-block; padding: 2px 8px; border-radius: 999px;
+    background: rgba(100, 116, 139, 0.35); color: #cbd5e1; font-size: .75rem;
+    text-transform: uppercase; letter-spacing: .04em;
+  }
+  tr.apto-pausa.apto-pausa-almoco td {
+    background: rgba(245, 158, 11, 0.10);
+    border-top-color: rgba(245, 158, 11, 0.45);
+    border-bottom-color: rgba(245, 158, 11, 0.45);
+  }
+  tr.apto-pausa.apto-pausa-almoco .apto-pausa-tag {
+    background: rgba(245, 158, 11, 0.22); color: #fbbf24;
+  }
   header {
     display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between;
     gap: 16px; margin-bottom: 22px;
@@ -199,7 +250,7 @@ LIVE_HTML = r"""<!DOCTYPE html>
     <section class="panel">
       <h2>Linha do tempo (05:00–19:00)</h2>
       <div class="legend">
-        <span><i class="w"></i>Wi‑Fi</span>
+        <span><i class="w"></i>Trabalho</span>
         <span><i class="t"></i>Assuntos</span>
       </div>
       <div class="timeline-wrap">
@@ -214,17 +265,15 @@ LIVE_HTML = r"""<!DOCTYPE html>
     </section>
 
     <section class="panel">
-      <h2>Intervalos Wi‑Fi</h2>
-      <ul class="list" id="wifiList"></ul>
-      <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-top:12px">
-        <span class="meta">Presença</span>
-        <input id="wifiChegada" type="time" style="background:var(--bg2);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-family:var(--mono)" />
-        <span class="meta">até</span>
-        <input id="wifiSaida" type="time" style="background:var(--bg2);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-family:var(--mono)" />
-        <button type="button" id="btnSalvarWifi">Salvar presença</button>
-        <button type="button" id="btnWifiAuto">Usar automático</button>
+      <h2>Janelas de trabalho</h2>
+      <p class="meta" id="wifiDetectadoHint" style="margin:0 0 10px"></p>
+      <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:12px">
+        <button type="button" id="btnAddTrabalho">+ intervalo</button>
+        <button type="button" id="btnSalvarWifi">Salvar janelas</button>
+        <button type="button" id="btnWifiAuto">Usar automático (Wi‑Fi)</button>
         <span class="meta" id="wifiPresencaMsg"></span>
       </div>
+      <div id="trabalhoIntervalos" style="display:grid;gap:8px"></div>
       <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-top:12px">
         <span class="meta">Almoço</span>
         <input id="almocoInicio" type="time" style="background:var(--bg2);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-family:var(--mono)" />
@@ -239,7 +288,7 @@ LIVE_HTML = r"""<!DOCTYPE html>
       <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px;flex-wrap:wrap">
         <h2 style="margin:0">Assuntos</h2>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
-          <button type="button" id="btnDistribuirWifi">Distribuir tempo Wi‑Fi</button>
+          <button type="button" id="btnDistribuirWifi">Distribuir tempo de trabalho</button>
           <button type="button" id="btnConfirmApto">Confirmar apontamentos</button>
         </div>
       </div>
@@ -329,11 +378,14 @@ function pct(min) {
 }
 
 function renderStatus() {
-  const on = !!DATA.at_office;
+  const place = DATA.place;
+  const on = !!(DATA.at_work || DATA.at_office);
   document.getElementById('statusDot').classList.toggle('on', on);
-  document.getElementById('statusText').textContent = on
-    ? 'No escritório agora'
-    : 'Fora do escritório';
+  let txt = 'Fora da rede de trabalho';
+  if (place === 'home') txt = 'Em casa agora';
+  else if (place === 'office' || DATA.at_office) txt = 'No escritório agora';
+  else if (DATA.at_work) txt = 'Na rede de trabalho agora';
+  document.getElementById('statusText').textContent = txt;
   const gen = DATA.generated_at ? new Date(DATA.generated_at).toLocaleString('pt-BR') : '—';
   document.getElementById('generatedAt').textContent = 'Atualizado: ' + gen;
 }
@@ -373,6 +425,7 @@ function ensureDays() {
     document.getElementById('btnSalvarAlmoco').addEventListener('click', () => salvarAlmoco());
     document.getElementById('btnSalvarWifi').addEventListener('click', () => salvarWifiPresenca());
     document.getElementById('btnWifiAuto').addEventListener('click', () => limparWifiPresenca());
+    document.getElementById('btnAddTrabalho').addEventListener('click', () => adicionarLinhaTrabalho());
     daysWired = true;
   }
 }
@@ -382,10 +435,10 @@ function renderDay(day) {
   if (!d) return;
 
   document.getElementById('kpis').innerHTML = `
-    <div class="kpi"><div class="label">Wi‑Fi</div><div class="value">${esc(d.wifi_label || '—')}</div><div class="sub">${esc(d.first_in || '—')} → ${esc(d.last_out || '—')}</div></div>
-    <div class="kpi"><div class="label">Tempo conectado</div><div class="value">${esc(d.wifi_total || '0min')}</div><div class="sub">${d.wifi.length} intervalo(s)</div></div>
+    <div class="kpi"><div class="label">Trabalho</div><div class="value">${esc(d.wifi_label || '—')}</div><div class="sub">${esc(d.first_in || '—')} → ${esc(d.last_out || '—')}</div></div>
+    <div class="kpi"><div class="label">Tempo nas janelas</div><div class="value">${esc(d.wifi_total || '0min')}</div><div class="sub">${d.wifi.length} bloco(s)${(d.almoco && d.almoco_sec) ? ` · −almoço ${esc(d.almoco.dur || '')}` : ''}</div></div>
     <div class="kpi"><div class="label">Assuntos</div><div class="value">${d.topics.length}</div><div class="sub">total ${esc(d.topic_total || '0min')}</div></div>
-    <div class="kpi"><div class="label">Gateway</div><div class="value" style="font-size:1rem;font-family:var(--mono)">${esc(DATA.last_gateway || '—')}</div><div class="sub">último check ${esc((DATA.last_check || '').slice(11,19) || '—')}</div></div>
+    <div class="kpi"><div class="label">Gateway</div><div class="value" style="font-size:1rem;font-family:var(--mono)">${esc(DATA.last_gateway || '—')}</div><div class="sub">SSID ${esc(DATA.last_ssid || '—')} · ${esc((DATA.last_check || '').slice(11,19) || '—')}</div></div>
   `;
 
   const tl = document.getElementById('timeline');
@@ -398,7 +451,7 @@ function renderDay(day) {
     el.className = 'seg wifi';
     el.style.left = left + '%';
     el.style.width = Math.max(0.35, right - left) + '%';
-    el.title = `${iv.start_hm}–${iv.end_hm} (${iv.dur})`;
+    el.title = `${iv.start_hm}–${iv.end_hm} (${iv.dur}) ${iv.label || ''}`;
     tl.appendChild(el);
   });
   (d.topics || []).forEach(iv => {
@@ -413,62 +466,106 @@ function renderDay(day) {
     tl.appendChild(el);
   });
 
-  const wifiList = document.getElementById('wifiList');
-  if (!d.wifi.length) {
-    wifiList.innerHTML = '<li class="empty">Sem registros de presença neste dia.</li>';
-  } else {
-    wifiList.innerHTML = d.wifi.map(iv => `
-      <li>
-        <span class="time">${esc(iv.start_hm)}–${esc(iv.end_hm)}</span>
-        <span class="dur">${esc(iv.dur)}</span>
-        <span>${esc(iv.label || d.wifi_label || '')}</span>
-      </li>`).join('');
-  }
   fillWifiPresencaInputs(d);
 }
 
 function fillWifiPresencaInputs(dayData) {
   const wp = (dayData && dayData.wifi_presenca) || {};
   const det = wp.detectado || {};
-  const ini = document.getElementById('wifiChegada');
-  const fim = document.getElementById('wifiSaida');
   const msg = document.getElementById('wifiPresencaMsg');
-  if (ini) ini.value = wp.inicio || det.inicio || '';
-  if (fim) fim.value = wp.fim || det.fim || '';
-  if (msg) {
-    if (wp.manual) {
-      msg.textContent = `manual ${wp.inicio || '—'}–${wp.fim || '—'} (auto: ${det.inicio || '—'}→${det.fim || '—'})`;
+  const hint = document.getElementById('wifiDetectadoHint');
+  const rows = (wp.intervalos && wp.intervalos.length)
+    ? wp.intervalos
+    : ((det.intervalos && det.intervalos.length)
+      ? det.intervalos
+      : ((wp.inicio && wp.fim) ? [{ inicio: wp.inicio, fim: wp.fim, label: '' }] : []));
+  renderTrabalhoEditor(rows);
+
+  const detRows = det.intervalos || [];
+  if (hint) {
+    if (detRows.length) {
+      hint.textContent = 'Sugestão Wi‑Fi: ' + detRows.map(x => `${x.inicio}–${x.fim}${x.label ? ' (' + x.label + ')' : ''}`).join(' · ');
     } else if (det.inicio || det.fim) {
-      msg.textContent = `automático ${det.inicio || '—'}→${det.fim || '—'}`;
+      hint.textContent = `Sugestão Wi‑Fi: ${det.inicio || '—'}→${det.fim || '—'}`;
     } else {
-      msg.textContent = 'sem detecção — informe chegada/saída';
+      hint.textContent = 'Sem detecção Wi‑Fi — informe as janelas manualmente (escritório/casa).';
     }
   }
+  if (msg) {
+    if (wp.manual) {
+      msg.textContent = `manual (${(wp.intervalos || []).length || 1} janela(s))`;
+    } else if (detRows.length || det.inicio) {
+      msg.textContent = 'usando automático (Wi‑Fi)';
+    } else {
+      msg.textContent = 'sem janelas';
+    }
+  }
+}
+
+function renderTrabalhoEditor(rows) {
+  const wrap = document.getElementById('trabalhoIntervalos');
+  if (!wrap) return;
+  const list = (rows && rows.length) ? rows : [{ inicio: '', fim: '', label: '' }];
+  const timeStyle = 'background:var(--bg2);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-family:var(--mono)';
+  const textStyle = 'flex:1;min-width:120px;background:var(--bg2);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:8px 10px';
+  wrap.innerHTML = list.map((r, i) => `
+    <div class="trabalho-row" data-i="${i}" style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">
+      <input class="tr-ini" type="time" value="${esc(r.inicio || '')}" style="${timeStyle}" />
+      <span class="meta">até</span>
+      <input class="tr-fim" type="time" value="${esc(r.fim || '')}" style="${timeStyle}" />
+      <input class="tr-label" type="text" placeholder="Ex.: Liber / Casa" value="${esc(r.label || '')}" style="${textStyle}" />
+      <button type="button" class="tr-del" data-i="${i}" style="padding:6px 8px;font-size:.78rem">Remover</button>
+    </div>`).join('');
+  wrap.querySelectorAll('.tr-del').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const cur = collectTrabalhoIntervalos();
+      const idx = Number(btn.getAttribute('data-i'));
+      cur.splice(idx, 1);
+      renderTrabalhoEditor(cur.length ? cur : [{ inicio: '', fim: '', label: '' }]);
+    });
+  });
+}
+
+function collectTrabalhoIntervalos() {
+  const rows = [];
+  document.querySelectorAll('#trabalhoIntervalos .trabalho-row').forEach(row => {
+    rows.push({
+      inicio: (row.querySelector('.tr-ini') || {}).value || '',
+      fim: (row.querySelector('.tr-fim') || {}).value || '',
+      label: (row.querySelector('.tr-label') || {}).value || '',
+    });
+  });
+  return rows;
+}
+
+function adicionarLinhaTrabalho() {
+  const cur = collectTrabalhoIntervalos();
+  cur.push({ inicio: '', fim: '', label: '' });
+  renderTrabalhoEditor(cur);
 }
 
 async function salvarWifiPresenca() {
   const err = document.getElementById('errBox');
   const info = document.getElementById('wifiPresencaMsg');
   const day = selectedDay || (DATA && DATA.today);
-  const inicio = document.getElementById('wifiChegada').value;
-  const fim = document.getElementById('wifiSaida').value;
   if (!day) return;
+  const intervalos = collectTrabalhoIntervalos().filter(x => x.inicio && x.fim);
   try {
     const res = await fetch('/api/wifi-presenca', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ day, inicio, fim }),
+      body: JSON.stringify({ day, intervalos }),
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
     aptoLocked = false;
-    info.textContent = `Salvo: ${data.inicio}–${data.fim}`;
+    info.textContent = `Salvo: ${(data.intervalos || []).length} janela(s)`;
     if (err) err.hidden = true;
     await loadData(true);
   } catch (e) {
     if (err) {
       err.hidden = false;
-      err.textContent = 'Falha ao salvar presença: ' + e.message;
+      err.textContent = 'Falha ao salvar janelas: ' + e.message;
     }
   }
 }
@@ -478,7 +575,7 @@ async function limparWifiPresenca() {
   const info = document.getElementById('wifiPresencaMsg');
   const day = selectedDay || (DATA && DATA.today);
   if (!day) return;
-  if (!confirm('Voltar à presença detectada pelo Wi‑Fi neste dia?')) return;
+  if (!confirm('Usar as janelas detectadas pelo Wi‑Fi (escritório/casa) neste dia?')) return;
   try {
     const res = await fetch('/api/wifi-presenca', {
       method: 'POST',
@@ -488,13 +585,13 @@ async function limparWifiPresenca() {
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
     aptoLocked = false;
-    info.textContent = 'Usando detecção automática';
+    info.textContent = 'Usando detecção automática (Wi‑Fi)';
     if (err) err.hidden = true;
     await loadData(true);
   } catch (e) {
     if (err) {
       err.hidden = false;
-      err.textContent = 'Falha ao limpar presença: ' + e.message;
+      err.textContent = 'Falha ao usar automático: ' + e.message;
     }
   }
 }
@@ -527,11 +624,56 @@ async function salvarAlmoco() {
     aptoLocked = false;
     info.textContent = `Salvo: ${data.inicio}–${data.fim}`;
     err.hidden = true;
+    await loadData(true);
     await loadApontamentos(true);
   } catch (e) {
     err.hidden = false;
     err.textContent = 'Falha ao salvar almoço: ' + e.message;
   }
+}
+
+function draftHm(r, which) {
+  if (which === 'ini') return r.hora_inicio_hm || String(r.hora_inicio || '').slice(0, 5);
+  return r.hora_fim_hm || String(r.hora_fim || '').slice(0, 5);
+}
+
+function classifyAptoPausa(iniMin, fimMin) {
+  const alm = (APTO && APTO.almoco) || {};
+  const a0 = parseHmToMinutes(alm.inicio || '');
+  const a1 = parseHmToMinutes(alm.fim || '');
+  const overlap = (a0 != null && a1 != null)
+    ? Math.min(fimMin, a1) - Math.max(iniMin, a0)
+    : 0;
+  if (overlap >= 10) {
+    const hi = minutesToHm(Math.max(iniMin, a0));
+    const hf = minutesToHm(Math.min(fimMin, a1));
+    return {
+      kind: 'almoco',
+      tag: 'Almoço',
+      text: `Pausa sem trabalho · almoço ${hi}–${hf}`,
+    };
+  }
+  return {
+    kind: 'pausa',
+    tag: 'Pausa',
+    text: `Pausa sem trabalho · ${minutesToHm(iniMin)}–${minutesToHm(fimMin)}`,
+  };
+}
+
+function renderAptoPausaRow(iniMin, fimMin) {
+  const info = classifyAptoPausa(iniMin, fimMin);
+  const dur = fmtDurSec((fimMin - iniMin) * 60);
+  const cls = info.kind === 'almoco' ? 'apto-pausa apto-pausa-almoco' : 'apto-pausa';
+  return `
+    <tr class="${cls}" aria-label="${esc(info.text)}">
+      <td colspan="6">
+        <div class="apto-pausa-label">
+          <span class="apto-pausa-tag">${esc(info.tag)}</span>
+          <span>${esc(info.text)}</span>
+          <span>${esc(dur)}</span>
+        </div>
+      </td>
+    </tr>`;
 }
 
 function renderApontamentos() {
@@ -549,53 +691,74 @@ function renderApontamentos() {
   }
 
   const defDigits = String(APTO.default_codigo_chamado || '').replace(/^CHA-?/i, '');
+  const rowsHtml = [];
+  APTO.drafts.forEach((r, i) => {
+    if (i > 0) {
+      const prev = APTO.drafts[i - 1];
+      const prevEnd = parseHmToMinutes(draftHm(prev, 'fim'));
+      const curIni = parseHmToMinutes(draftHm(r, 'ini'));
+      if (prevEnd != null && curIni != null && curIni - prevEnd >= 5) {
+        rowsHtml.push(renderAptoPausaRow(prevEnd, curIni));
+      }
+    }
+    const digits = (r.codigo_chamado || defDigits || '').replace(/^CHA-?/i,'');
+    const bloqueado = !!(r.already_sent || r.invalido_las);
+    const hint = r.already_sent
+      ? ' <span class="meta">(já apontado)</span>'
+      : (r.invalido_las
+        ? ` <span class="meta">(${esc(r.skip_reason || 'inválido LAS')})</span>`
+        : (r.manual
+          ? ' <span class="meta">(manual)</span>'
+          : (r.hora_editada
+            ? ' <span class="meta">(horário editado)</span>'
+            : (String(r.id || '').includes('-resto-') ? ' <span class="meta">(restante)</span>' : ''))));
+    const delBtn = (r.manual && r.manual_id)
+      ? `<button type="button" class="apto-del-manual" data-mid="${esc(r.manual_id)}" style="padding:6px 8px;font-size:.78rem">Excluir</button>`
+      : '';
+    const hi = esc(draftHm(r, 'ini'));
+    const hf = esc(draftHm(r, 'fim'));
+    rowsHtml.push(`
+      <tr style="border-top:1px solid var(--line);opacity:${bloqueado ? '.55' : '1'}">
+        <td class="apto-col-ok" style="padding:10px 6px"><input type="checkbox" data-i="${i}" class="apto-sel" ${(!bloqueado && (r.selected || digits)) ? 'checked' : ''} ${bloqueado ? 'disabled' : ''}></td>
+        <td class="apto-col-hora" style="padding:10px 6px">
+          <div class="apto-horarios">
+            <input data-i="${i}" class="apto-hi" type="text" inputmode="numeric" placeholder="HH:MM" maxlength="5" value="${hi}" ${bloqueado ? 'disabled' : ''}>
+            <span class="meta">–</span>
+            <input data-i="${i}" class="apto-hf" type="text" inputmode="numeric" placeholder="HH:MM" maxlength="5" value="${hf}" ${bloqueado ? 'disabled' : ''}>
+          </div>
+        </td>
+        <td class="apto-col-dur apto-dur" data-i="${i}" style="padding:10px 6px">${esc(r.dur)}</td>
+        <td class="apto-col-assunto" style="padding:10px 6px">${esc(r.assunto)}${hint}</td>
+        <td class="apto-col-cha" style="padding:10px 6px">
+          <div style="display:flex;align-items:center;background:var(--bg2);border:1px solid var(--line);border-radius:8px;overflow:hidden;max-width:150px">
+            <span style="padding:7px 8px;color:var(--muted);font-family:var(--mono);font-size:.82rem;border-right:1px solid var(--line)">CHA-</span>
+            <input data-i="${i}" class="apto-cha" type="text" inputmode="numeric" placeholder="2761"
+              value="${esc(digits)}"
+              style="width:88px;background:transparent;color:var(--text);border:0;padding:8px 10px;font-family:var(--mono)" ${bloqueado ? 'disabled' : ''}>
+          </div>
+        </td>
+        <td class="apto-col-act" style="padding:10px 6px">${delBtn}</td>
+      </tr>`);
+  });
 
   wrap.innerHTML = `
-    <table style="width:100%;border-collapse:collapse;font-size:.92rem">
+    <table>
       <thead>
         <tr style="text-align:left;color:var(--muted)">
-          <th style="padding:8px 6px;width:44px">OK</th>
-          <th style="padding:8px 6px;width:120px">Horário</th>
-          <th style="padding:8px 6px;width:70px">Dur</th>
-          <th style="padding:8px 6px">Assunto</th>
-          <th style="padding:8px 6px;width:150px">Chamado</th>
-          <th style="padding:8px 6px;width:70px"></th>
+          <th class="apto-col-ok" style="padding:8px 6px">OK</th>
+          <th class="apto-col-hora" style="padding:8px 6px">Horário</th>
+          <th class="apto-col-dur" style="padding:8px 6px">Dur</th>
+          <th class="apto-col-assunto" style="padding:8px 6px">Assunto</th>
+          <th class="apto-col-cha" style="padding:8px 6px">Chamado</th>
+          <th class="apto-col-act" style="padding:8px 6px"></th>
         </tr>
       </thead>
       <tbody>
-        ${APTO.drafts.map((r, i) => {
-          const digits = (r.codigo_chamado || defDigits || '').replace(/^CHA-?/i,'');
-          const bloqueado = !!(r.already_sent || r.invalido_las);
-          const hint = r.already_sent
-            ? ' <span class="meta">(já apontado)</span>'
-            : (r.invalido_las
-              ? ` <span class="meta">(${esc(r.skip_reason || 'inválido LAS')})</span>`
-              : (r.manual
-                ? ' <span class="meta">(manual)</span>'
-                : (String(r.id || '').includes('-resto-') ? ' <span class="meta">(restante)</span>' : '')));
-          const delBtn = (r.manual && r.manual_id)
-            ? `<button type="button" class="apto-del-manual" data-mid="${esc(r.manual_id)}" style="padding:6px 8px;font-size:.78rem">Excluir</button>`
-            : '';
-          return `
-          <tr style="border-top:1px solid var(--line);opacity:${bloqueado ? '.55' : '1'}">
-            <td style="padding:10px 6px"><input type="checkbox" data-i="${i}" class="apto-sel" ${(!bloqueado && (r.selected || digits)) ? 'checked' : ''} ${bloqueado ? 'disabled' : ''}></td>
-            <td style="padding:10px 6px;font-family:var(--mono)">${esc(r.hora_inicio_hm)}–${esc(r.hora_fim_hm)}</td>
-            <td style="padding:10px 6px;color:var(--accent2);font-family:var(--mono)">${esc(r.dur)}</td>
-            <td style="padding:10px 6px">${esc(r.assunto)}${hint}</td>
-            <td style="padding:10px 6px">
-              <div style="display:flex;align-items:center;background:var(--bg2);border:1px solid var(--line);border-radius:8px;overflow:hidden;max-width:150px">
-                <span style="padding:7px 8px;color:var(--muted);font-family:var(--mono);font-size:.82rem;border-right:1px solid var(--line)">CHA-</span>
-                <input data-i="${i}" class="apto-cha" type="text" inputmode="numeric" placeholder="2761"
-                  value="${esc(digits)}"
-                  style="width:88px;background:transparent;color:var(--text);border:0;padding:8px 10px;font-family:var(--mono)" ${bloqueado ? 'disabled' : ''}>
-              </div>
-            </td>
-            <td style="padding:10px 6px">${delBtn}</td>
-          </tr>`;
-        }).join('')}
+        ${rowsHtml.join('')}
       </tbody>
     </table>`;
   wireChaInputs();
+  wireHoraInputs();
   wireManualDelete();
 }
 
@@ -627,6 +790,106 @@ function wireChaInputs() {
     };
     inp.addEventListener('input', sync);
     inp.addEventListener('blur', sync);
+  });
+}
+
+function parseHmToMinutes(v) {
+  const s = String(v || '').trim();
+  let m = s.match(/^(\d{1,2}):(\d{2})$/);
+  if (!m) {
+    const d = s.replace(/\D/g, '');
+    if (d.length === 3 || d.length === 4) {
+      const h = d.length === 3 ? d.slice(0, 1) : d.slice(0, 2);
+      const min = d.slice(-2);
+      m = [null, h, min];
+    }
+  }
+  if (!m) return null;
+  const h = Number(m[1]);
+  const min = Number(m[2]);
+  if (h > 23 || min > 59) return null;
+  return h * 60 + min;
+}
+
+function roundMinutesToFive(totalMin) {
+  let m = Math.round(Number(totalMin) / 5) * 5;
+  if (m >= 24 * 60) m = 23 * 60 + 55;
+  if (m < 0) m = 0;
+  return m;
+}
+
+function minutesToHm(totalMin) {
+  const h = Math.floor(totalMin / 60);
+  const m = totalMin % 60;
+  return String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0');
+}
+
+function fmtDurSec(sec) {
+  sec = Math.max(0, Math.floor(Number(sec) || 0));
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  if (h && m) return h + 'h' + String(m).padStart(2, '0');
+  if (h) return h + 'h';
+  return m + 'min';
+}
+
+function applyDraftHoraEdit(i, roundOnBlur) {
+  if (!APTO || !APTO.drafts[i]) return;
+  const hiEl = document.querySelector(`.apto-hi[data-i="${i}"]`);
+  const hfEl = document.querySelector(`.apto-hf[data-i="${i}"]`);
+  const durEl = document.querySelector(`.apto-dur[data-i="${i}"]`);
+  const err = document.getElementById('aptoErr');
+  if (!hiEl || !hfEl) return;
+
+  let iniMin = parseHmToMinutes(hiEl.value);
+  let fimMin = parseHmToMinutes(hfEl.value);
+  if (iniMin == null || fimMin == null) {
+    if (err) {
+      err.hidden = false;
+      err.textContent = 'Horário inválido na linha ' + (Number(i) + 1);
+    }
+    return;
+  }
+
+  if (roundOnBlur) {
+    iniMin = roundMinutesToFive(iniMin);
+    fimMin = roundMinutesToFive(fimMin);
+    hiEl.value = minutesToHm(iniMin);
+    hfEl.value = minutesToHm(fimMin);
+  }
+
+  if (fimMin <= iniMin) {
+    if (err) {
+      err.hidden = false;
+      err.textContent = 'Linha ' + (Number(i) + 1) + ': hora fim deve ser maior que início';
+    }
+    return;
+  }
+
+  const hi = minutesToHm(iniMin);
+  const hf = minutesToHm(fimMin);
+  const seconds = (fimMin - iniMin) * 60;
+  const row = APTO.drafts[i];
+  row.hora_inicio = hi + ':00';
+  row.hora_fim = hf + ':00';
+  row.hora_inicio_hm = hi;
+  row.hora_fim_hm = hf;
+  row.seconds = seconds;
+  row.minutes = Math.max(1, Math.floor(seconds / 60));
+  row.dur = fmtDurSec(seconds);
+  row.hora_editada = true;
+  if (durEl) durEl.textContent = row.dur;
+  aptoLocked = true;
+  if (err) err.hidden = true;
+}
+
+function wireHoraInputs() {
+  document.querySelectorAll('.apto-hi, .apto-hf').forEach(inp => {
+    if (inp.dataset.wired) return;
+    inp.dataset.wired = '1';
+    const i = inp.getAttribute('data-i');
+    inp.addEventListener('change', () => applyDraftHoraEdit(i, false));
+    inp.addEventListener('blur', () => applyDraftHoraEdit(i, true));
   });
 }
 
@@ -705,11 +968,16 @@ function collectSelectedRows() {
     const i = Number(cb.getAttribute('data-i'));
     const base = APTO.drafts[i];
     const cha = document.querySelector(`.apto-cha[data-i="${i}"]`);
+    const hiEl = document.querySelector(`.apto-hi[data-i="${i}"]`);
+    const hfEl = document.querySelector(`.apto-hf[data-i="${i}"]`);
     const codigo = normalizeCodigoInput(cha ? cha.value : '');
+    applyDraftHoraEdit(i, true);
+    const horaInicio = (hiEl && hiEl.value) ? (hiEl.value.length === 5 ? hiEl.value + ':00' : hiEl.value) : base.hora_inicio;
+    const horaFim = (hfEl && hfEl.value) ? (hfEl.value.length === 5 ? hfEl.value + ':00' : hfEl.value) : base.hora_fim;
     rows.push({
       data_trabalho: base.data_trabalho,
-      hora_inicio: base.hora_inicio,
-      hora_fim: base.hora_fim,
+      hora_inicio: horaInicio,
+      hora_fim: horaFim,
       codigo_chamado: codigo,
       usuario_gestao_id: APTO.usuario_gestao_id,
       assunto: base.assunto,
@@ -772,7 +1040,10 @@ async function distribuirWifi() {
   const msg = document.getElementById('aptoMsg');
   const day = selectedDay || (DATA && DATA.today);
   if (!day) return;
-  if (!confirm('Distribuir o tempo de Wi‑Fi sem assunto proporcionalmente entre os assuntos?')) return;
+  if (!confirm('Redistribuir os assuntos para preencher o tempo das janelas de trabalho (proporcional, respeitando almoço e lacunas)?')) return;
+  if (msg) { msg.hidden = false; msg.textContent = 'Distribuindo tempo de trabalho…'; }
+  if (err) err.hidden = true;
+  showAptoLoading('Distribuindo tempo de trabalho…');
   try {
     const res = await fetch('/api/apontamentos/distribuir', {
       method: 'POST',
@@ -785,9 +1056,9 @@ async function distribuirWifi() {
     if (data.distribuicao && data.distribuicao.ok) aptoLocked = true;
     renderApontamentos();
     const dist = data.distribuicao || {};
-    msg.hidden = false;
     if (dist.ok) {
       err.hidden = true;
+      msg.hidden = false;
       msg.textContent = dist.message || 'Distribuição aplicada';
     } else {
       err.hidden = false;
@@ -795,8 +1066,16 @@ async function distribuirWifi() {
       msg.hidden = true;
     }
   } catch (e) {
+    aptoLoading = false;
+    setAptoButtonsDisabled(false);
     err.hidden = false;
     err.textContent = 'Falha na distribuição: ' + e.message;
+    if (msg) msg.hidden = true;
+    if (APTO) renderApontamentos();
+    else {
+      const wrap = document.getElementById('aptoTableWrap');
+      if (wrap) wrap.innerHTML = '<div class="empty">Falha na distribuição. Tente novamente.</div>';
+    }
   }
 }
 
@@ -954,6 +1233,10 @@ class Handler(BaseHTTPRequestHandler):
                 day = date.fromisoformat(day_s) if day_s else datetime.now().astimezone().date()
                 if payload.get("clear"):
                     result = bd.clear_wifi_presenca_dia(day)
+                elif payload.get("intervalos") is not None:
+                    result = bd.save_wifi_presenca_dia(
+                        day, intervalos=payload.get("intervalos") or []
+                    )
                 else:
                     result = bd.save_wifi_presenca_dia(
                         day, payload.get("inicio") or "", payload.get("fim") or ""
