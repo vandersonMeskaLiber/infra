@@ -842,6 +842,7 @@ def build_drafts_for_day(day: date, cfg: Optional[Dict[str, Any]] = None) -> Dic
             "seconds": seconds,
             "minutes": minutes,
             "assunto": label,
+            "label_base": bd._label_base(label),
             "codigo_chamado": codigo,
             "usuario_gestao_id": usuario_id,
             "usuario_label": usuario_label,
@@ -1322,8 +1323,6 @@ def validate_rows(
     errors: List[str] = []
     now = now or datetime.now().astimezone()
     today = now.date()
-    allow_other_weeks = bool(ap.get("permitir_outras_semanas", False))
-    week_start, week_end = week_bounds(today)
     local_now = datetime.now()
     usuario_default = int(ap.get("usuario_gestao_id") or 14)
 
@@ -1383,11 +1382,6 @@ def validate_rows(
             continue
         if day == today and dt_fim > local_now + timedelta(minutes=15):
             errors.append(f"{prefix}: hora fim não pode ser > 15min à frente")
-            continue
-        if not allow_other_weeks and (day < week_start or day > week_end):
-            errors.append(
-                f"{prefix}: só semana atual ({week_start.isoformat()} a {week_end.isoformat()})"
-            )
             continue
 
         cleaned.append(

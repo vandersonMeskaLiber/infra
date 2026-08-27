@@ -18,6 +18,7 @@ OUT_HTML = WORKLOG_DIR / "dashboard.html"
 STATE_PATH = WORKLOG_DIR / "logs" / "state" / "wifi_state.json"
 WIFI_PRESENCA_PATH = WORKLOG_DIR / "logs" / "wifi_presenca.json"
 ASSUNTOS_MANUAIS_PATH = WORKLOG_DIR / "logs" / "assuntos_manuais.json"
+ASSUNTOS_EDITS_PATH = WORKLOG_DIR / "logs" / "assuntos_edits.json"
 ALMOCO_PATH = WORKLOG_DIR / "logs" / "almoco.json"
 
 # reusa a lógica do daily_summary (mesmo diretório)
@@ -294,6 +295,255 @@ def delete_assunto_manual(day: date, item_id: str) -> Dict[str, Any]:
         data.pop(day_s, None)
     _save_assuntos_manuais(data)
     return {"day": day_s, "deleted": item_id, "ok": True}
+
+
+def _label_base(label: Any) -> str:
+    import re
+
+    s = str(label or "").strip()
+    s = re.sub(r"\s*\(restante\)\s*$", "", s, flags=re.IGNORECASE).strip()
+    return s
+
+
+def load_assuntos_edits() -> Dict[str, Any]:
+    if not ASSUNTOS_EDITS_PATH.exists():
+        return {}
+    try:
+        data = json.loads(ASSUNTOS_EDITS_PATH.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _save_assuntos_edits(data: Dict[str, Any]) -> None:
+    ASSUNTOS_EDITS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    ASSUNTOS_EDITS_PATH.write_text(
+        json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+
+
+def assuntos_edits_do_dia(day: date) -> Dict[str, Any]:
+    raw = load_assuntos_edits().get(day.isoformat()) or {}
+    if not isinstance(raw, dict):
+        raw = {}
+    renames = raw.get("renames") if isinstance(raw.get("renames"), dict) else {}
+    deleted = raw.get("deleted") if isinstance(raw.get("deleted"), list) else []
+    unifies = raw.get("unifies") if isinstance(raw.get("unifies"), list) else []
+    return {
+        "renames": {str(k): str(v) for k, v in renames.items() if str(k).strip() and str(v).strip()},
+        "deleted": [str(x).strip() for x in deleted if str(x).strip()],
+        "unifies": [u for u in unifies if isinstance(u, dict)],
+    }
+
+
+def _day_edits_mutable(day: date) -> tuple:
+    data = load_assuntos_edits()
+    day_s = day.isoformat()
+    cur = data.get(day_s) if isinstance(data.get(day_s), dict) else {}
+    if "renames" not in cur or not isinstance(cur.get("renames"), dict):
+        cur["renames"] = {}
+    if "deleted" not in cur or not isinstance(cur.get("deleted"), list):
+        cur["deleted"] = []
+    if "unifies" not in cur or not isinstance(cur.get("unifies"), list):
+        cur["unifies"] = []
+    data[day_s] = cur
+    return data, day_s, cur
+
+
+def rename_assunto_auto(day: date, from_label: str, to_label: str) -> Dict[str, Any]:
+    src = _label_base(from_label)
+    dst = (to_label or "").strip()
+    if not src:
+        raise ValueError("Assunto de origem inválido")
+    if not dst:
+        raise ValueError("Informe o novo assunto")
+    if len(dst) > 200:
+        dst = dst[:200].rstrip()
+    data, day_s, cur = _day_edits_mutable(day)
+    # se já havia rename para src, atualiza alvo; também mapeia destino intermediário
+    cur["renames"][src] = dst
+    # remove de deleted se reapareceu via rename
+    cur["deleted"] = [x for x in cur["deleted"] if _label_base(x) not in {src, _label_base(dst)}]
+    _save_assuntos_edits(data)
+    return {"day": day_s, "ok": True, "from": src, "to": dst, "edits": assuntos_edits_do_dia(day)}
+
+
+def delete_assunto_auto(day: date, label: str, item_id: Optional[str] = None) -> Dict[str, Any]:
+    base = _label_base(label)
+    item_id = (item_id or "").strip()
+    if item_id.startswith("manual-"):
+        return delete_assunto_manual(day, item_id)
+    if not base and not item_id:
+        raise ValueError("Informe o assunto a excluir")
+    data, day_s, cur = _day_edits_mutable(day)
+    if base and base not in cur["deleted"]:
+        cur["deleted"].append(base)
+    # limpa renames cujo destino/origem é o excluído
+    cur["renames"] = {
+        k: v
+        for k, v in cur["renames"].items()
+        if _label_base(k) != base and _label_base(v) != base
+    }
+    _save_assuntos_edits(data)
+    return {"day": day_s, "ok": True, "deleted": base, "edits": assuntos_edits_do_dia(day)}
+
+
+def unify_assuntos_auto(
+    day: date,
+    labels: List[str],
+    novo_assunto: str,
+    codigo_chamado: Optional[str] = None,
+) -> Dict[str, Any]:
+    bases = []
+    for lb in labels or []:
+        b = _label_base(lb)
+        if b and b not in bases:
+            bases.append(b)
+    if len(bases) < 2:
+        raise ValueError("Selecione ao menos 2 assuntos distintos para unificar")
+    nome = (novo_assunto or "").strip()
+    if not nome:
+        raise ValueError("Informe o nome do assunto unificado")
+    if len(nome) > 200:
+        nome = nome[:200].rstrip()
+    codigo = (codigo_chamado or "").strip().upper() or None
+    if codigo:
+        import re
+
+        m = re.match(r"^(?:CHA[\s\-_]*)?(\d{1,6})$", codigo)
+        if not m:
+            raise ValueError("Chamado inválido (use CHA-XXXX)")
+        n = int(m.group(1))
+        codigo = f"CHA-{n:04d}" if n < 1000 else f"CHA-{n}"
+
+    data, day_s, cur = _day_edits_mutable(day)
+    item = {
+        "id": f"uni-{uuid.uuid4().hex[:10]}",
+        "assunto": nome,
+        "sources": bases,
+        "codigo_chamado": codigo,
+    }
+    # remove unifies anteriores que usem as mesmas sources
+    cur["unifies"] = [
+        u
+        for u in cur["unifies"]
+        if not isinstance(u, dict)
+        or not set(_label_base(x) for x in (u.get("sources") or [])) & set(bases)
+    ]
+    cur["unifies"].append(item)
+    # sources passam a apontar para o nome unificado via rename (ajuda em pedaços)
+    for b in bases:
+        cur["renames"][b] = nome
+    cur["deleted"] = [x for x in cur["deleted"] if _label_base(x) not in set(bases) | {nome}]
+    _save_assuntos_edits(data)
+    return {"day": day_s, "ok": True, "unify": item, "edits": assuntos_edits_do_dia(day)}
+
+
+def apply_assuntos_edits_to_topics(
+    day: date, topics: List[Dict[str, Any]], min_minutes: int = 5
+) -> List[Dict[str, Any]]:
+    """Aplica renomeações, exclusões e unificações persistidas nos assuntos do dia."""
+    if not topics:
+        return []
+    edits = assuntos_edits_do_dia(day)
+    renames = edits["renames"]
+    deleted = {_label_base(x) for x in edits["deleted"]}
+    unifies = edits["unifies"]
+
+    def resolve_name(label: str) -> str:
+        base = _label_base(label)
+        seen = set()
+        cur = base
+        while cur in renames and cur not in seen:
+            seen.add(cur)
+            nxt = _label_base(renames[cur])
+            if not nxt:
+                break
+            cur = nxt
+        # preserva sufixo (restante)
+        if label.strip().lower().endswith("(restante)") and not cur.lower().endswith("(restante)"):
+            return f"{cur} (restante)"
+        return cur
+
+    def name_chain(label: str) -> set:
+        base = _label_base(label)
+        out = {base}
+        cur = base
+        seen = set()
+        while cur in renames and cur not in seen:
+            seen.add(cur)
+            nxt = _label_base(renames[cur])
+            if not nxt:
+                break
+            cur = nxt
+            out.add(cur)
+        return out
+
+    # 1) unificações: junta sources em um intervalo contínuo
+    consumed: set = set()
+    merged_extra: List[Dict[str, Any]] = []
+    for uni in unifies:
+        sources = {_label_base(x) for x in (uni.get("sources") or []) if _label_base(x)}
+        if len(sources) < 2:
+            continue
+        hits = []
+        for t in topics:
+            chain = name_chain(str(t.get("label") or ""))
+            if chain & sources:
+                hits.append(t)
+                consumed |= chain
+        if len(hits) < 1:
+            continue
+        try:
+            starts = [ds.parse_ts(t["start"]) for t in hits]
+            ends = [ds.parse_ts(t["end"]) for t in hits]
+        except Exception:
+            continue
+        start = min(starts)
+        end = max(ends)
+        if end <= start:
+            continue
+        seconds = int((end - start).total_seconds())
+        if seconds < max(1, min_minutes) * 60:
+            continue
+        nome = str(uni.get("assunto") or "").strip() or "Assunto unificado"
+        piece = {
+            "id": uni.get("id") or f"uni-{uuid.uuid4().hex[:8]}",
+            "start": start.isoformat(),
+            "end": end.isoformat(),
+            "start_hm": ds.fmt_hm(start),
+            "end_hm": ds.fmt_hm(end),
+            "dur": ds.fmt_dur(seconds),
+            "seconds": seconds,
+            "label": nome,
+            "manual": False,
+            "unificado": True,
+            "codigo_chamado": uni.get("codigo_chamado"),
+        }
+        merged_extra.append(piece)
+        consumed |= sources
+        consumed.add(_label_base(nome))
+
+    out: List[Dict[str, Any]] = []
+    for t in topics:
+        base = _label_base(t.get("label"))
+        chain = name_chain(str(t.get("label") or ""))
+        if chain & consumed:
+            continue
+        if base in deleted or (chain & deleted):
+            continue
+        final = resolve_name(str(t.get("label") or ""))
+        final_base = _label_base(final)
+        if final_base in deleted or final_base in consumed:
+            continue
+        piece = dict(t)
+        piece["label"] = final
+        piece["label_base"] = final_base
+        out.append(piece)
+
+    out.extend(merged_extra)
+    out.sort(key=lambda x: (x.get("start") or "", x.get("end") or ""))
+    return out
 
 
 def _topic_dict_from_manual(day: date, item: Dict[str, Any], now: datetime) -> Optional[Dict[str, Any]]:
@@ -596,6 +846,8 @@ def day_payload(day: date, cfg: Dict[str, Any], wifi_rows, cursor_rows, now: dat
     auto_topics = _carve_auto_topics_around_manuals(auto_topics, manual_topics, min_minutes)
     topics_out = auto_topics + manual_topics
     topics_out.sort(key=lambda t: (t.get("start") or "", t.get("end") or "", 0 if t.get("manual") else 1))
+    # Edições persistidas (rename / delete / unificar) antes de recortar nas janelas
+    topics_out = apply_assuntos_edits_to_topics(day, topics_out, min_minutes)
     # Assuntos só dentro das janelas de trabalho (já sem almoço)
     topics_out = _carve_topics_to_work_windows(topics_out, wifi, min_minutes)
     topic_total = sum(int(t.get("seconds") or 0) for t in topics_out)

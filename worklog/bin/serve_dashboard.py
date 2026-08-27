@@ -78,7 +78,16 @@ LIVE_HTML = r"""<!DOCTYPE html>
   #aptoTableWrap th.apto-col-dur { color: var(--muted); font-family: inherit; }
   #aptoTableWrap .apto-col-assunto { width: auto; }
   #aptoTableWrap .apto-col-cha { width: 150px; }
-  #aptoTableWrap .apto-col-act { width: 72px; }
+  #aptoTableWrap .apto-col-act { width: 88px; }
+  #aptoTableWrap .apto-assunto-input {
+    width: 100%; min-width: 140px;
+    background: var(--bg2); color: var(--text);
+    border: 1px solid var(--line); border-radius: 8px;
+    padding: 7px 10px; font: inherit;
+  }
+  #aptoTableWrap .apto-assunto-input:disabled {
+    opacity: .7; border-style: dashed;
+  }
   tr.apto-pausa td {
     padding: 8px 10px !important;
     background: rgba(148, 163, 184, 0.12);
@@ -288,6 +297,7 @@ LIVE_HTML = r"""<!DOCTYPE html>
       <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px;flex-wrap:wrap">
         <h2 style="margin:0">Assuntos</h2>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button type="button" id="btnUnificarAssuntos">Unificar selecionados</button>
           <button type="button" id="btnDistribuirWifi">Distribuir tempo de trabalho</button>
           <button type="button" id="btnConfirmApto">Confirmar apontamentos</button>
         </div>
@@ -336,7 +346,7 @@ let aptoLoading = false;
 const REFRESH_MS = 30000;
 
 function setAptoButtonsDisabled(disabled) {
-  const ids = ['btnConfirmApto', 'btnDistribuirWifi', 'btnAddManual'];
+  const ids = ['btnConfirmApto', 'btnDistribuirWifi', 'btnAddManual', 'btnUnificarAssuntos'];
   ids.forEach(id => {
     const el = document.getElementById(id);
     if (el) el.disabled = !!disabled;
@@ -421,6 +431,7 @@ function ensureDays() {
     document.getElementById('btnRefresh').addEventListener('click', () => loadData(true));
     document.getElementById('btnConfirmApto').addEventListener('click', () => confirmarApontamentos());
     document.getElementById('btnDistribuirWifi').addEventListener('click', () => distribuirWifi());
+    document.getElementById('btnUnificarAssuntos').addEventListener('click', () => unificarAssuntosSelecionados());
     document.getElementById('btnAddManual').addEventListener('click', () => adicionarAssuntoManual());
     document.getElementById('btnSalvarAlmoco').addEventListener('click', () => salvarAlmoco());
     document.getElementById('btnSalvarWifi').addEventListener('click', () => salvarWifiPresenca());
@@ -712,9 +723,9 @@ function renderApontamentos() {
           : (r.hora_editada
             ? ' <span class="meta">(horário editado)</span>'
             : (String(r.id || '').includes('-resto-') ? ' <span class="meta">(restante)</span>' : ''))));
-    const delBtn = (r.manual && r.manual_id)
-      ? `<button type="button" class="apto-del-manual" data-mid="${esc(r.manual_id)}" style="padding:6px 8px;font-size:.78rem">Excluir</button>`
-      : '';
+    const delBtn = bloqueado
+      ? ''
+      : `<button type="button" class="apto-del-assunto" data-i="${i}" data-mid="${esc(r.manual_id || '')}" style="padding:6px 8px;font-size:.78rem">Excluir</button>`;
     const hi = esc(draftHm(r, 'ini'));
     const hf = esc(draftHm(r, 'fim'));
     rowsHtml.push(`
@@ -728,7 +739,13 @@ function renderApontamentos() {
           </div>
         </td>
         <td class="apto-col-dur apto-dur" data-i="${i}" style="padding:10px 6px">${esc(r.dur)}</td>
-        <td class="apto-col-assunto" style="padding:10px 6px">${esc(r.assunto)}${hint}</td>
+        <td class="apto-col-assunto" style="padding:10px 6px">
+          <input data-i="${i}" class="apto-assunto-input" type="text"
+            value="${esc(r.assunto || '')}"
+            data-original="${esc(r.assunto || '')}"
+            data-label-base="${esc(r.label_base || '')}"
+            ${bloqueado ? 'disabled' : ''}>${hint}
+        </td>
         <td class="apto-col-cha" style="padding:10px 6px">
           <div style="display:flex;align-items:center;background:var(--bg2);border:1px solid var(--line);border-radius:8px;overflow:hidden;max-width:150px">
             <span style="padding:7px 8px;color:var(--muted);font-family:var(--mono);font-size:.82rem;border-right:1px solid var(--line)">CHA-</span>
@@ -759,7 +776,7 @@ function renderApontamentos() {
     </table>`;
   wireChaInputs();
   wireHoraInputs();
-  wireManualDelete();
+  wireAssuntoEdits();
 }
 
 function normalizeCodigoInput(v) {
@@ -893,16 +910,166 @@ function wireHoraInputs() {
   });
 }
 
-function wireManualDelete() {
-  document.querySelectorAll('.apto-del-manual').forEach(btn => {
+function wireAssuntoEdits() {
+  document.querySelectorAll('.apto-assunto-input').forEach(inp => {
+    if (inp.dataset.wired) return;
+    inp.dataset.wired = '1';
+    inp.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter') { ev.preventDefault(); inp.blur(); }
+    });
+    inp.addEventListener('blur', () => salvarRenameAssunto(inp));
+  });
+  document.querySelectorAll('.apto-del-assunto').forEach(btn => {
     if (btn.dataset.wired) return;
     btn.dataset.wired = '1';
     btn.addEventListener('click', () => {
-      const mid = btn.getAttribute('data-mid');
-      if (mid) excluirAssuntoManual(mid);
+      const i = Number(btn.getAttribute('data-i'));
+      const mid = btn.getAttribute('data-mid') || '';
+      excluirAssuntoLinha(i, mid);
     });
   });
 }
+
+async function refreshAssuntosAposEdicao(msgText) {
+  const info = document.getElementById('aptoMsg');
+  const err = document.getElementById('aptoErr');
+  aptoLocked = false;
+  if (err) err.hidden = true;
+  if (info) {
+    info.hidden = false;
+    info.textContent = msgText || 'Assuntos atualizados';
+  }
+  await loadData(true);
+  await loadApontamentos(true, 'Atualizando assuntos…');
+}
+
+async function salvarRenameAssunto(inp) {
+  const err = document.getElementById('aptoErr');
+  const i = Number(inp.getAttribute('data-i'));
+  const original = String(inp.getAttribute('data-original') || '');
+  const novo = String(inp.value || '').trim();
+  if (!novo) {
+    inp.value = original;
+    return;
+  }
+  if (novo === original.trim()) return;
+  const fromLabel = String(inp.getAttribute('data-label-base') || original).trim() || original;
+  const day = selectedDay || (DATA && DATA.today);
+  if (!day) return;
+  try {
+    const res = await fetch('/api/assuntos-edits', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ day, action: 'rename', from: fromLabel, to: novo }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
+    if (APTO && APTO.drafts[i]) {
+      APTO.drafts[i].assunto = novo;
+      APTO.drafts[i].label_base = novo.replace(/\s*\(restante\)\s*$/i, '').trim();
+    }
+    await refreshAssuntosAposEdicao(`Assunto renomeado: ${novo}`);
+  } catch (e) {
+    inp.value = original;
+    if (err) {
+      err.hidden = false;
+      err.textContent = 'Falha ao renomear: ' + e.message;
+    }
+  }
+}
+
+async function excluirAssuntoLinha(i, manualId) {
+  const err = document.getElementById('aptoErr');
+  const day = selectedDay || (DATA && DATA.today);
+  if (!day || !APTO || !APTO.drafts[i]) return;
+  const row = APTO.drafts[i];
+  const label = row.assunto || row.label_base || '';
+  if (!confirm('Excluir o assunto "' + label + '"?')) return;
+  try {
+    let res;
+    if (manualId) {
+      res = await fetch('/api/assuntos-manuais', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ day, id: manualId, delete: true }),
+      });
+    } else {
+      res = await fetch('/api/assuntos-edits', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ day, action: 'delete', label, id: row.id || '' }),
+      });
+    }
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
+    await refreshAssuntosAposEdicao('Assunto excluído');
+  } catch (e) {
+    if (err) {
+      err.hidden = false;
+      err.textContent = 'Falha ao excluir: ' + e.message;
+    }
+  }
+}
+
+async function unificarAssuntosSelecionados() {
+  const err = document.getElementById('aptoErr');
+  const day = selectedDay || (DATA && DATA.today);
+  if (!day || !APTO) return;
+  const selected = [];
+  document.querySelectorAll('.apto-sel:checked').forEach(cb => {
+    const i = Number(cb.getAttribute('data-i'));
+    const row = APTO.drafts[i];
+    if (!row || row.already_sent || row.invalido_las) return;
+    const inp = document.querySelector(`.apto-assunto-input[data-i="${i}"]`);
+    const label = (inp && inp.value) || row.assunto || '';
+    selected.push({ i, label, base: row.label_base || label });
+  });
+  const bases = [];
+  selected.forEach(s => {
+    const b = String(s.base || s.label || '').replace(/\s*\(restante\)\s*$/i, '').trim();
+    if (b && !bases.includes(b)) bases.push(b);
+  });
+  if (bases.length < 2) {
+    if (err) {
+      err.hidden = false;
+      err.textContent = 'Selecione ao menos 2 assuntos distintos (OK) para unificar.';
+    }
+    return;
+  }
+  const sugerido = bases[0];
+  const nome = prompt('Nome do assunto unificado:', sugerido);
+  if (nome == null) return;
+  const novo = String(nome).trim();
+  if (!novo) {
+    if (err) {
+      err.hidden = false;
+      err.textContent = 'Informe um nome para o assunto unificado.';
+    }
+    return;
+  }
+  const chaInp = document.querySelector('.apto-cha:not(:disabled)');
+  const codigo = normalizeCodigoInput(chaInp ? chaInp.value : (APTO.default_codigo_chamado || ''));
+  showAptoLoading('Unificando assuntos…');
+  try {
+    const res = await fetch('/api/assuntos-edits', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ day, action: 'unify', labels: bases, to: novo, codigo_chamado: codigo }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
+    await refreshAssuntosAposEdicao(`Unificados em: ${novo}`);
+  } catch (e) {
+    aptoLoading = false;
+    setAptoButtonsDisabled(false);
+    if (APTO) renderApontamentos();
+    if (err) {
+      err.hidden = false;
+      err.textContent = 'Falha ao unificar: ' + e.message;
+    }
+  }
+}
+
 
 async function adicionarAssuntoManual() {
   const err = document.getElementById('aptoErr');
@@ -974,13 +1141,15 @@ function collectSelectedRows() {
     applyDraftHoraEdit(i, true);
     const horaInicio = (hiEl && hiEl.value) ? (hiEl.value.length === 5 ? hiEl.value + ':00' : hiEl.value) : base.hora_inicio;
     const horaFim = (hfEl && hfEl.value) ? (hfEl.value.length === 5 ? hfEl.value + ':00' : hfEl.value) : base.hora_fim;
+    const assuntoInp = document.querySelector(`.apto-assunto-input[data-i="${i}"]`);
+    const assunto = (assuntoInp && assuntoInp.value.trim()) || base.assunto;
     rows.push({
       data_trabalho: base.data_trabalho,
       hora_inicio: horaInicio,
       hora_fim: horaFim,
       codigo_chamado: codigo,
       usuario_gestao_id: APTO.usuario_gestao_id,
-      assunto: base.assunto,
+      assunto: assunto,
     });
   });
   return rows;
@@ -1241,6 +1410,35 @@ class Handler(BaseHTTPRequestHandler):
                     result = bd.save_wifi_presenca_dia(
                         day, payload.get("inicio") or "", payload.get("fim") or ""
                     )
+                body = json.dumps(result, ensure_ascii=False).encode("utf-8")
+                self._send(200, body, "application/json; charset=utf-8")
+            except Exception as exc:
+                body = json.dumps({"error": str(exc)}, ensure_ascii=False).encode("utf-8")
+                self._send(400, body, "application/json; charset=utf-8")
+            return
+        if path == "/api/assuntos-edits":
+            try:
+                payload = self._read_json()
+                day_s = payload.get("day")
+                day = date.fromisoformat(day_s) if day_s else datetime.now().astimezone().date()
+                action = str(payload.get("action") or "").strip().lower()
+                if action == "rename":
+                    result = bd.rename_assunto_auto(
+                        day, payload.get("from") or "", payload.get("to") or ""
+                    )
+                elif action == "delete":
+                    result = bd.delete_assunto_auto(
+                        day, payload.get("label") or "", payload.get("id") or ""
+                    )
+                elif action == "unify":
+                    result = bd.unify_assuntos_auto(
+                        day,
+                        payload.get("labels") or [],
+                        payload.get("to") or "",
+                        payload.get("codigo_chamado"),
+                    )
+                else:
+                    raise ValueError("action inválida (rename|delete|unify)")
                 body = json.dumps(result, ensure_ascii=False).encode("utf-8")
                 self._send(200, body, "application/json; charset=utf-8")
             except Exception as exc:
