@@ -75,7 +75,9 @@ if [ -f /proxy/apache/000-liber-docker.conf ]; then
     chmod 644 /etc/ssl/certs/liber-docker.crt
     chmod 600 /etc/ssl/private/liber-docker.key
   fi
+  a2enmod rewrite alias headers >/dev/null 2>&1 || true
   cp /proxy/apache/000-liber-docker.conf /etc/apache2/sites-available/000-liber-docker.conf
+  a2dissite 000-default >/dev/null 2>&1 || true
   a2ensite 000-liber-docker.conf >/dev/null 2>&1 || true
 fi
 
