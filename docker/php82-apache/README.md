@@ -37,6 +37,7 @@ Acesso: http://localhost:8080
 | DAT (default) | `docker compose up -d --build` |
 | MQP | `docker compose -f docker-compose.yml -f docker-compose.mqp.yml up -d --build` |
 | LAS (Gestão) | `docker compose -f docker-compose.yml -f docker-compose.las.yml up -d --build` |
+| APT (apresentação) | `docker compose -f docker-compose.yml -f docker-compose.apt.yml up -d --build` |
 
 Conexões por cliente em `infra/conexoes/liberSistemas/<CLIENTE>/.env` (`CT_CLIENTE`, `REMOTE_*`, `DB_OPER_*`).
 

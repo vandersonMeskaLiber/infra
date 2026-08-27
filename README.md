@@ -8,7 +8,7 @@ Configuração de ambiente local LIBER: Docker, proxies e templates de conexão.
 |-------|----------|
 | `docker/php82-apache/` | Imagem PHP 8.2 + Apache e `docker-compose` |
 | `proxies/liberSistemas/` | Scripts de proxy (MySQL, ODBC) |
-| `conexoes/liberSistemas/` | Templates `.env.example` por cliente (`DAT`, `MQP`, …) |
+| `conexoes/liberSistemas/` | Templates `.env.example` por cliente (`DAT`, `MQP`, `APT`, …) |
 | `worklog/` | Código do Worklog (presença Wi‑Fi + Cursor + apontamentos). Runtime em `~/.worklog` via `bash worklog/bin/install.sh` |
 
 ## Primeiro uso
